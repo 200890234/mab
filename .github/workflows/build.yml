@@ -6,6 +6,9 @@ on:
       - 'v*'          # 推送形如 v1.0.0 的 tag 时触发打包并发布 Release
   workflow_dispatch:  # 允许在 Actions 页面手动触发
 
+permissions:
+  contents: write    # 允许创建 Release 并上传资产
+
 jobs:
   build:
     runs-on: windows-latest
@@ -23,7 +26,7 @@ jobs:
         run: npm ci
 
       - name: Build installer
-        run: npm run dist
+        run: npm run dist -- --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
