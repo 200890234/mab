@@ -6,6 +6,10 @@ A multi-session AI browser built with Electron. Open Gemini, DeepSeek, ChatGPT, 
 
 English is the default UI language.
 
+## Screenshot
+
+![Mervyn's AI Browser](assets/screenshot.png)
+
 ## Features
 
 - **Multi-session tabs** — Create multiple sessions per AI tool; each session keeps its own page state.
