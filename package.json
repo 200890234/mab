@@ -1,0 +1,70 @@
+{
+  "name": "mab",
+  "productName": "Mervyn's AI Browser",
+  "description": "多功能 AI 工具浏览器",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "electron",
+    "ai-browser",
+    "multi-session",
+    "chatgpt",
+    "gemini",
+    "deepseek"
+  ],
+  "author": "Mervyn",
+  "license": "MIT",
+  "homepage": "https://github.com/200890234/mab#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/200890234/mab.git"
+  },
+  "bugs": {
+    "url": "https://github.com/200890234/mab/issues"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.mervyn.aibrowser",
+    "productName": "Mervyn's AI Browser",
+    "copyright": "Copyright © 2026 Mervyn",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "assets/**",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "name": "mab"
+    },
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": "x64"
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

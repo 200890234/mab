@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+    <title>AI Browser</title>
+    <meta name="lang" content="en">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #2d2d2d;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 100%;
+            height: 100vh;
+            padding: 12px 8px;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #3d3d3d;
+        }
+
+        #viewList { flex: 1; overflow-y: auto; overflow-x: hidden; }
+        #viewList::-webkit-scrollbar { width: 4px; }
+        #viewList::-webkit-scrollbar-thumb { background: #555; border-radius: 2px; }
+
+        .app-title {
+            font-size: 16px;
+            font-weight: bold;
+            padding: 8px 12px 16px;
+            color: #fff;
+            border-bottom: 1px solid #3d3d3d;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .app-title span {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+
+        .tool-group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px 6px 8px;
+            font-size: 13px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            user-select: none;
+        }
+
+        .add-btn {
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            padding: 0 4px;
+            transition: 0.2s;
+        }
+        .add-btn:hover { color: #4CAF50; transform: scale(1.2); }
+
+        .view-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 10px 8px 22px;
+            margin: 2px 0;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+            background: transparent;
+            border: none;
+            color: #d0d0d0;
+            width: 100%;
+            font-size: 13px;
+            text-align: left;
+            font-family: inherit;
+        }
+        .view-item:hover { background: #3d3d3d; }
+        .view-item.active {
+            background: #40414F;
+            color: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+
+        .view-item .label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 1;
+            min-width: 0;
+        }
+        .view-item .icon { font-size: 15px; flex-shrink: 0; }
+        .view-item .name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .view-item .close-btn {
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            padding: 0 4px;
+            font-size: 13px;
+            opacity: 0;
+            flex-shrink: 0;
+            transition: 0.2s;
+        }
+        .view-item:hover .close-btn,
+        .view-item.active .close-btn { opacity: 1; }
+        .view-item .close-btn:hover { color: #ff6b6b; }
+
+        .view-item .rename-btn {
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            padding: 0 2px;
+            font-size: 13px;
+            opacity: 0;
+            flex-shrink: 0;
+            transition: 0.2s;
+        }
+        .view-item:hover .rename-btn,
+        .view-item.active .rename-btn { opacity: 1; }
+        .view-item .rename-btn:hover { color: #4CAF50; }
+
+        .view-item input.rename-input {
+            flex: 1;
+            min-width: 0;
+            background: #1a1a2e;
+            color: #fff;
+            border: 1px solid #4CAF50;
+            border-radius: 4px;
+            padding: 2px 4px;
+            font-size: 13px;
+            outline: none;
+            width: 100%;
+        }
+
+        .status-bar {
+            padding: 10px 12px 4px;
+            border-top: 1px solid #3d3d3d;
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        /* 设置入口（底部，平时只显示一行） */
+        .settings-entry {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-top: 1px solid #3d3d3d;
+            font-size: 12px;
+            color: #b0b0b0;
+            cursor: pointer;
+            flex-shrink: 0;
+            user-select: none;
+            transition: background 0.15s;
+        }
+        .settings-entry:hover { background: #3d3d3d; }
+        .settings-entry .gear { font-size: 14px; }
+
+        /* 设置面板（浮层，展开时显示） */
+        .settings-panel {
+            position: fixed;
+            left: 8px;
+            right: 8px;
+            bottom: 52px;
+            background: #252525;
+            border: 1px solid #444;
+            border-radius: 8px;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+            padding: 10px;
+            display: none;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 20;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        .settings-panel.open { display: flex; }
+        .settings-panel .panel-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 4px 6px 6px;
+            border-bottom: 1px solid #3a3a3a;
+            margin-bottom: 4px;
+        }
+        .settings-panel .panel-close {
+            cursor: pointer;
+            color: #888;
+            font-size: 12px;
+            line-height: 1;
+            padding: 2px 4px;
+            transition: color 0.15s;
+        }
+        .settings-panel .panel-close:hover { color: #fff; }
+        /* 通用设置项行 */
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 6px;
+            font-size: 13px;
+            color: #d0d0d0;
+        }
+        .setting-row + .setting-row { border-top: 1px solid #333; }
+
+        /* 开关（复用） */
+        .switch {
+            position: relative;
+            width: 36px;
+            height: 20px;
+            flex-shrink: 0;
+            cursor: pointer;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            inset: 0;
+            background: #555;
+            border-radius: 20px;
+            transition: 0.2s;
+        }
+        .slider::before {
+            content: '';
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            left: 3px;
+            top: 3px;
+            background: #fff;
+            border-radius: 50%;
+            transition: 0.2s;
+        }
+        .switch input:checked + .slider { background: #4CAF50; }
+        .switch input:checked + .slider::before { transform: translateX(16px); }
+
+        .color-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* 品牌色字母圆标 */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            border-radius: 5px;
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1;
+            flex-shrink: 0;
+            text-transform: none;
+            letter-spacing: -0.3px;
+        }
+        .tool-group-header .badge {
+            width: 20px;
+            height: 20px;
+            font-size: 11px;
+            margin-right: 8px;
+        }
+        .tool-group-header .tool-logo {
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            object-fit: contain;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+        .view-item .badge {
+            width: 20px;
+            height: 20px;
+            font-size: 10px;
+            margin-right: 8px;
+        }
+
+        .toast {
+            position: fixed;
+            left: 50%;
+            bottom: 48px;
+            transform: translateX(-50%);
+            background: #444;
+            color: #fff;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s;
+            white-space: nowrap;
+            max-width: 90%;
+        }
+        .toast.show { opacity: 1; }
+
+        /* 侧边栏右侧拖拽手柄 */
+        .sidebar-resizer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 5px;
+            height: 100vh;
+            cursor: col-resize;
+            background: transparent;
+            z-index: 10;
+        }
+        .sidebar-resizer:hover,
+        .sidebar-resizer.dragging {
+            background: linear-gradient(90deg, rgba(102,126,234,0) 0%, rgba(102,126,234,0.6) 100%);
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div id="resizer" class="sidebar-resizer" title="Drag to resize sidebar"></div>
+        <div class="app-title">
+            🤖 AI Browser
+            <span>Multi-session</span>
+        </div>
+
+        <div id="viewList"></div>
+
+        <div class="settings-panel" id="settingsPanel">
+            <div class="panel-title">
+                <span>Settings</span>
+                <span class="panel-close" id="settingsClose" title="Collapse">▲</span>
+            </div>
+            <div class="setting-row">
+                <span>Launch at startup</span>
+                <label class="switch">
+                    <input type="checkbox" id="autostartToggle">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <!-- 以后新增设置项，按此结构追加 .setting-row 即可 -->
+        </div>
+
+        <div class="settings-entry" id="settingsEntry">
+            <span class="gear">⚙</span>
+            <span>Settings</span>
+        </div>
+
+        <div class="status-bar">
+            <span id="viewCount">0 sessions</span>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // 侧边栏宽度拖拽
+        (function () {
+            const resizer = document.getElementById('resizer');
+            let dragging = false;
+            resizer.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                dragging = true;
+                resizer.classList.add('dragging');
+                document.body.style.userSelect = 'none';
+                document.body.style.cursor = 'col-resize';
+            });
+            window.addEventListener('mousemove', (e) => {
+                if (!dragging) return;
+                // clientX 即相对侧边栏内部的目标宽度
+                window.electronAPI.sidebarResize(e.clientX);
+            });
+            window.addEventListener('mouseup', () => {
+                if (!dragging) return;
+                dragging = false;
+                resizer.classList.remove('dragging');
+                document.body.style.userSelect = '';
+                document.body.style.cursor = '';
+            });
+        })();
+
+        // 设置面板：底部入口点击展开/收起
+        (function () {
+            const entry = document.getElementById('settingsEntry');
+            const panel = document.getElementById('settingsPanel');
+            const closeBtn = document.getElementById('settingsClose');
+            entry.addEventListener('click', (e) => {
+                e.stopPropagation();
+                panel.classList.toggle('open');
+            });
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                panel.classList.remove('open');
+            });
+
+            // 点击面板外部任意位置自动收起
+            document.addEventListener('click', (e) => {
+                if (panel.classList.contains('open')
+                    && !panel.contains(e.target)
+                    && !entry.contains(e.target)) {
+                    panel.classList.remove('open');
+                }
+            });
+
+            // 开机自动启动开关（面板内第一项）
+            const toggle = document.getElementById('autostartToggle');
+            try { toggle.checked = !!window.electronAPI.getAutoStart(); } catch (e) {}
+            toggle.addEventListener('change', () => {
+                try { window.electronAPI.setAutoStart(toggle.checked); } catch (e) {}
+            });
+        })();
+
+        // 状态完全来自主进程，避免两端硬编码不一致
+        let AI_TOOLS = {};
+        let views = new Map();       // key -> { toolKey, name, icon, color }
+        let activeViewKey = null;
+
+        const viewList = document.getElementById('viewList');
+
+        function renderSidebar() {
+            viewList.innerHTML = '';
+
+            // 所有已知工具都渲染分组标题，便于随时新建会话
+            const toolKeys = Object.keys(AI_TOOLS);
+
+            toolKeys.forEach(toolKey => {
+                const tool = AI_TOOLS[toolKey];
+                if (!tool) return;
+
+                const header = document.createElement('div');
+                header.className = 'tool-group-header';
+
+                const label = document.createElement('span');
+                label.style.display = 'inline-flex';
+                label.style.alignItems = 'center';
+                if (tool.logo) {
+                    const hdrImg = document.createElement('img');
+                    hdrImg.src = tool.logo;
+                    hdrImg.className = 'tool-logo';
+                    hdrImg.alt = tool.name;
+                    label.appendChild(hdrImg);
+                } else {
+                    const hdrBadge = document.createElement('span');
+                    hdrBadge.className = 'badge';
+                    hdrBadge.textContent = tool.icon;
+                    hdrBadge.style.background = tool.color;
+                    // 字母较多时缩小字号，避免拥挤（如 GPT）
+                    hdrBadge.style.fontSize = tool.icon.length >= 3 ? '8px' : '11px';
+                    label.appendChild(hdrBadge);
+                }
+                label.appendChild(document.createTextNode(tool.name));
+
+                const addBtn = document.createElement('button');
+                addBtn.className = 'add-btn';
+                addBtn.dataset.tool = toolKey;
+                addBtn.title = `New ${tool.name} session`;
+                addBtn.textContent = '+';
+
+                header.appendChild(label);
+                header.appendChild(addBtn);
+                viewList.appendChild(header);
+
+                for (const [key, item] of views) {
+                    if (item.toolKey !== toolKey) continue;
+                    viewList.appendChild(buildItem(key, item, tool));
+                }
+            });
+
+            document.getElementById('viewCount').textContent = `${views.size} session${views.size === 1 ? '' : 's'}`;
+        }
+
+        function buildItem(key, item, tool) {
+            const btn = document.createElement('button');
+            btn.className = 'view-item' + (key === activeViewKey ? ' active' : '');
+            btn.dataset.key = key;
+
+            const label = document.createElement('span');
+            label.className = 'label';
+
+            const dot = document.createElement('span');
+            dot.className = 'color-dot';
+            dot.style.background = tool.color;
+
+            const name = document.createElement('span');
+            name.className = 'name';
+            // 用 textContent 而非 innerHTML，避免标题注入
+            name.textContent = item.name;
+            // 仅当名称被截断（溢出）时才显示 tooltip，避免短名称也弹提示
+            requestAnimationFrame(() => {
+                name.title = name.scrollWidth > name.clientWidth + 1 ? item.name : '';
+            });
+
+            label.append(dot, name);
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'close-btn';
+            closeBtn.textContent = '✕';
+            closeBtn.title = 'Close session';
+
+            const renameBtn = document.createElement('button');
+            renameBtn.className = 'rename-btn';
+            renameBtn.textContent = '✎';
+            renameBtn.title = 'Rename';
+
+            btn.append(label, renameBtn, closeBtn);
+
+            btn.addEventListener('click', (e) => {
+                if (e.target === closeBtn || e.target === renameBtn) return;
+                window.electronAPI.switchView(key);
+            });
+            btn.addEventListener('dblclick', (e) => {
+                if (e.target === closeBtn || e.target === renameBtn) return;
+                startInlineRename(btn, key, item.name);
+            });
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                window.electronAPI.closeView(key);
+            });
+            renameBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                startInlineRename(btn, key, item.name);
+            });
+
+            return btn;
+        }
+
+        let toastTimer = null;
+        function showToast(message) {
+            const el = document.getElementById('toast');
+            el.textContent = message;
+            el.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+        }
+
+        window.electronAPI.onStateSync((data) => {
+            AI_TOOLS = data.tools || {};
+            views = new Map((data.views || []).map(v => [v.key, v]));
+            activeViewKey = data.activeKey;
+            renderSidebar();
+        });
+
+        window.electronAPI.onViewCreated((data) => {
+            views.set(data.key, data);
+            renderSidebar();
+            const el = viewList.querySelector(`.view-item[data-key="${CSS.escape(data.key)}"]`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+
+        window.electronAPI.onViewClosed((viewKey) => {
+            views.delete(viewKey);
+            renderSidebar();
+        });
+
+        // 激活态由主进程驱动，保证 UI 与真实视图一致
+        window.electronAPI.onViewSwitched((viewKey) => {
+            activeViewKey = viewKey;
+            renderSidebar();
+        });
+
+        window.electronAPI.onNotification(showToast);
+
+        function doRename(key, currentName) {
+            const input = prompt('Rename session label:', currentName);
+            if (input === null) return; // 取消
+            const name = input.trim();
+            if (!name) return;
+            window.electronAPI.renameView(key, name);
+        }
+
+        // 内联编辑：把标签名替换成输入框，回车/失焦提交，Esc 取消
+        function startInlineRename(btn, key, currentName) {
+            if (btn.querySelector('input.rename-input')) return; // 已在编辑
+            const nameSpan = btn.querySelector('.name');
+            if (!nameSpan) return;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'rename-input';
+            input.value = currentName;
+            input.maxLength = 40;
+            nameSpan.replaceWith(input);
+            input.focus();
+            input.select();
+
+            let done = false;
+            const commit = () => {
+                if (done) return;
+                done = true;
+                const name = input.value.trim();
+                if (name && name !== currentName) {
+                    window.electronAPI.renameView(key, name);
+                } else {
+                    // 恢复原显示
+                    const span = document.createElement('span');
+                    span.className = 'name';
+                    span.textContent = currentName;
+                    input.replaceWith(span);
+                }
+            };
+            const cancel = () => {
+                if (done) return;
+                done = true;
+                const span = document.createElement('span');
+                span.className = 'name';
+                span.textContent = currentName;
+                input.replaceWith(span);
+            };
+
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commit(); }
+                else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+            });
+            input.addEventListener('blur', commit);
+            // 阻止点击输入框时触发标签切换
+            input.addEventListener('click', (e) => e.stopPropagation());
+        }
+
+        window.electronAPI.onViewRenamed(({ key, name }) => {
+            const item = views.get(key);
+            if (item) item.name = name;
+            renderSidebar();
+        });
+
+        viewList.addEventListener('click', (e) => {
+            const addBtn = e.target.closest('.add-btn');
+            if (addBtn) window.electronAPI.createView(addBtn.dataset.tool);
+        });
+    </script>
+</body>
+</html>

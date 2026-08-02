@@ -1,0 +1,34 @@
+# 打包产物
+dist/
+
+# 日志
+*.log
+out.log
+err.log
+_diag_out.txt
+
+# node 依赖
+node_modules/
+
+# 跨平台忽略
+.DS_Store
+Thumbs.db
+
+# 防止误提交根目录散落的可执行文件
+*.exe
+
+# 敏感/凭据文件（预防性，避免误提交密钥）
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.cer
+*.der
+.npmrc
+
+# Python 生成脚本临时产物
+__pycache__/
+*.pyc
