@@ -433,76 +433,121 @@ function checkForUpdate() {
     }).catch(err => console.error('[update] 检查失败:', err));
 }
 
+// 顶部应用菜单文案（随语言切换）
+const MENU_I18N = {
+    en: {
+        update: (v) => `Update available ↓ (v${v})`,
+        file: 'File',
+        newSession: 'New Session',
+        quit: 'Quit',
+        view: 'View',
+        back: 'Back',
+        forward: 'Forward',
+        reload: 'Reload',
+        forceReload: 'Force Reload',
+        resetZoom: 'Reset Zoom',
+        zoomIn: 'Zoom In',
+        zoomOut: 'Zoom Out',
+        help: 'Help',
+        openDevTools: 'Open DevTools',
+        about: 'About'
+    },
+    zh: {
+        update: (v) => `有更新 ↓ (v${v})`,
+        file: '文件',
+        newSession: '新建会话',
+        quit: '退出',
+        view: '视图',
+        back: '后退',
+        forward: '前进',
+        reload: '重新加载',
+        forceReload: '强制重新加载',
+        resetZoom: '重置缩放',
+        zoomIn: '放大',
+        zoomOut: '缩小',
+        help: '帮助',
+        openDevTools: '打开开发者工具',
+        about: '关于'
+    }
+};
+function menuT() {
+    return MENU_I18N[appConfig.lang === 'zh' ? 'zh' : 'en'];
+}
+
 // 顶部应用菜单
 function buildAppMenu() {
+    const m = menuT();
     const template = [];
 
     // 有更新时，在最顶层直接显示提示（不隐藏到子菜单）
     if (updateAvailable) {
         template.push({
-            label: `Update available ↓ (v${latestVersion})`,
+            label: m.update(latestVersion),
             click: () => shell.openExternal('https://github.com/200890234/mab/releases/latest')
         });
     }
 
     template.push({
-        label: 'File',
+        label: m.file,
         submenu: [
             {
-                label: 'New Session',
+                label: m.newSession,
                 submenu: Object.entries(AI_TOOLS).map(([key, tool]) => ({
                     label: `${tool.icon} ${tool.name}`,
                     click: () => addSession(key)
                 }))
             },
             { type: 'separator' },
-            { role: 'quit', label: 'Quit' }
+            { role: 'quit', label: m.quit }
         ]
     });
 
     template.push({
-        label: 'View',
+        label: m.view,
         submenu: [
             {
-                label: 'Back',
+                label: m.back,
                 accelerator: 'CmdOrCtrl+Left',
                 click: () => { const wc = getActiveWebContents(); if (wc && wc.canGoBack()) wc.goBack(); }
             },
             {
-                label: 'Forward',
+                label: m.forward,
                 accelerator: 'CmdOrCtrl+Right',
                 click: () => { const wc = getActiveWebContents(); if (wc && wc.canGoForward()) wc.goForward(); }
             },
             {
-                label: 'Reload',
+                label: m.reload,
                 accelerator: 'F5',
                 click: () => { const wc = getActiveWebContents(); if (wc) wc.reload(); }
             },
             {
-                label: 'Force Reload',
+                label: m.forceReload,
                 accelerator: 'Ctrl+F5',
                 click: () => { const wc = getActiveWebContents(); if (wc) wc.reloadIgnoringCache(); }
             },
             { type: 'separator' },
-            { role: 'resetZoom', label: 'Reset Zoom' },
-            { role: 'zoomIn', label: 'Zoom In' },
-            { role: 'zoomOut', label: 'Zoom Out' }
+            { role: 'resetZoom', label: m.resetZoom },
+            { role: 'zoomIn', label: m.zoomIn },
+            { role: 'zoomOut', label: m.zoomOut }
         ]
     });
 
     template.push({
-        label: 'Help',
+        label: m.help,
         submenu: [
             {
-                label: 'Open DevTools',
+                label: m.openDevTools,
                 accelerator: 'F12',
                 click: () => { const wc = getActiveWebContents(); if (wc) wc.toggleDevTools(); }
             },
             {
-                label: 'About',
+                label: m.about,
                 click: () => {
                     if (sidebarView && !sidebarView.webContents.isDestroyed()) {
-                        sidebarView.webContents.send('show-notification', "MAB - Mervyn's AI Browser");
+                        const text = appConfig.lang === 'zh'
+                            ? 'MAB - Mervyn 的 AI 浏览器'
+                            : "MAB - Mervyn's AI Browser";
+                        sidebarView.webContents.send('show-notification', text);
                     }
                 }
             }
@@ -835,8 +880,10 @@ ipcMain.on('set-autostart', (_event, enabled) => {
 ipcMain.handle('get-config', () => loadConfig());
 ipcMain.handle('set-config', async (_event, patch) => {
     const cfg = saveConfig(patch || {});
+    const langChanged = patch && appConfig.lang !== cfg.lang;
     appConfig = cfg;
     if (patch && patch.theme) applyTheme(cfg.theme);
+    if (langChanged) buildAppMenu(); // 语言变更时重建顶部菜单
     return cfg;
 });
 ipcMain.on('reload-view', (_event, viewKey) => {
