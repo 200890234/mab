@@ -366,11 +366,55 @@ function getActiveWebContents() {
     return entry.view.webContents;
 }
 
+// 更新检查状态
+let updateAvailable = false;
+let latestVersion = '';
+
+function compareVersions(a, b) {
+    const pa = String(a).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    const pb = String(b).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const x = pa[i] || 0;
+        const y = pb[i] || 0;
+        if (x > y) return 1;
+        if (x < y) return -1;
+    }
+    return 0;
+}
+
+function checkForUpdate() {
+    const current = app.getVersion();
+    fetch('https://api.github.com/repos/200890234/mab/releases/latest', {
+        headers: { 'User-Agent': 'mab-updater' }
+    }).then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    }).then(data => {
+        const tag = (data.tag_name || '').replace(/^v/, '');
+        if (!tag) return;
+        const newer = compareVersions(tag, current) > 0;
+        if (newer !== updateAvailable || tag !== latestVersion) {
+            updateAvailable = newer;
+            latestVersion = tag;
+            buildAppMenu();
+        }
+    }).catch(err => console.error('[update] 检查失败:', err));
+}
+
 // 顶部应用菜单
 function buildAppMenu() {
-    const template = [
-        {
-            label: 'File',
+    const template = [];
+
+    // 有更新时，在最顶层直接显示提示（不隐藏到子菜单）
+    if (updateAvailable) {
+        template.push({
+            label: `Update available ↓ (v${latestVersion})`,
+            click: () => shell.openExternal('https://github.com/200890234/mab/releases/latest')
+        });
+    }
+
+    template.push({
+        label: 'File',
             submenu: [
                 {
                     label: 'New Session',
@@ -430,7 +474,7 @@ function buildAppMenu() {
                 }
             ]
         }
-    ];
+    });
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
@@ -652,6 +696,8 @@ function createWindow() {
 
     // 构建顶部菜单（后退/前进/刷新/缩放等）
     buildAppMenu();
+    // 启动后检查更新（有更新时会在顶层菜单显示提示）
+    checkForUpdate();
 
     // 侧边栏作为一个 WebContentsView
     sidebarView = new WebContentsView({
