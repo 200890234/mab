@@ -415,65 +415,66 @@ function buildAppMenu() {
 
     template.push({
         label: 'File',
-            submenu: [
-                {
-                    label: 'New Session',
-                    submenu: Object.entries(AI_TOOLS).map(([key, tool]) => ({
-                        label: `${tool.icon} ${tool.name}`,
-                        click: () => addSession(key)
-                    }))
-                },
-                { type: 'separator' },
-                { role: 'quit', label: 'Quit' }
-            ]
-        },
-        {
-            label: 'View',
-            submenu: [
-                {
-                    label: 'Back',
-                    accelerator: 'CmdOrCtrl+Left',
-                    click: () => { const wc = getActiveWebContents(); if (wc && wc.canGoBack()) wc.goBack(); }
-                },
-                {
-                    label: 'Forward',
-                    accelerator: 'CmdOrCtrl+Right',
-                    click: () => { const wc = getActiveWebContents(); if (wc && wc.canGoForward()) wc.goForward(); }
-                },
-                {
-                    label: 'Reload',
-                    accelerator: 'F5',
-                    click: () => { const wc = getActiveWebContents(); if (wc) wc.reload(); }
-                },
-                {
-                    label: 'Force Reload',
-                    accelerator: 'Ctrl+F5',
-                    click: () => { const wc = getActiveWebContents(); if (wc) wc.reloadIgnoringCache(); }
-                },
-                { type: 'separator' },
-                { role: 'resetZoom', label: 'Reset Zoom' },
-                { role: 'zoomIn', label: 'Zoom In' },
-                { role: 'zoomOut', label: 'Zoom Out' }
-            ]
-        },
-        {
-            label: 'Help',
-            submenu: [
-                {
-                    label: 'Open DevTools',
-                    accelerator: 'F12',
-                    click: () => { const wc = getActiveWebContents(); if (wc) wc.toggleDevTools(); }
-                },
-                {
-                    label: 'About',
-                    click: () => {
-                        if (sidebarView && !sidebarView.webContents.isDestroyed()) {
-                            sidebarView.webContents.send('show-notification', "MAB - Mervyn's AI Browser");
-                        }
+        submenu: [
+            {
+                label: 'New Session',
+                submenu: Object.entries(AI_TOOLS).map(([key, tool]) => ({
+                    label: `${tool.icon} ${tool.name}`,
+                    click: () => addSession(key)
+                }))
+            },
+            { type: 'separator' },
+            { role: 'quit', label: 'Quit' }
+        ]
+    });
+
+    template.push({
+        label: 'View',
+        submenu: [
+            {
+                label: 'Back',
+                accelerator: 'CmdOrCtrl+Left',
+                click: () => { const wc = getActiveWebContents(); if (wc && wc.canGoBack()) wc.goBack(); }
+            },
+            {
+                label: 'Forward',
+                accelerator: 'CmdOrCtrl+Right',
+                click: () => { const wc = getActiveWebContents(); if (wc && wc.canGoForward()) wc.goForward(); }
+            },
+            {
+                label: 'Reload',
+                accelerator: 'F5',
+                click: () => { const wc = getActiveWebContents(); if (wc) wc.reload(); }
+            },
+            {
+                label: 'Force Reload',
+                accelerator: 'Ctrl+F5',
+                click: () => { const wc = getActiveWebContents(); if (wc) wc.reloadIgnoringCache(); }
+            },
+            { type: 'separator' },
+            { role: 'resetZoom', label: 'Reset Zoom' },
+            { role: 'zoomIn', label: 'Zoom In' },
+            { role: 'zoomOut', label: 'Zoom Out' }
+        ]
+    });
+
+    template.push({
+        label: 'Help',
+        submenu: [
+            {
+                label: 'Open DevTools',
+                accelerator: 'F12',
+                click: () => { const wc = getActiveWebContents(); if (wc) wc.toggleDevTools(); }
+            },
+            {
+                label: 'About',
+                click: () => {
+                    if (sidebarView && !sidebarView.webContents.isDestroyed()) {
+                        sidebarView.webContents.send('show-notification', "MAB - Mervyn's AI Browser");
                     }
                 }
-            ]
-        }
+            }
+        ]
     });
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
