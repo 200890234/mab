@@ -612,7 +612,7 @@ function closeSession(viewKey) {
     if (!entry) return;
 
     const toolName = (AI_TOOLS[entry.toolKey] && AI_TOOLS[entry.toolKey].name) || entry.toolKey;
-    const { response } = dialog.showMessageBoxSync(mainWindow, {
+    const response = dialog.showMessageBoxSync(mainWindow, {
         type: 'question',
         buttons: ['Close', 'Cancel'],
         defaultId: 1,
@@ -621,6 +621,7 @@ function closeSession(viewKey) {
         message: `Close "${entry.name || toolName}"?`,
         detail: 'The session tab will be removed. Login state is kept and can be restored by reopening the same AI tool.',
     });
+    // showMessageBoxSync 返回按钮索引（数字），Cancel 为 1，选它则中止关闭
     if (response === 1) return;
 
     // 注意：主动关闭标签不再清除登录态，登录数据由 persist: partition 自动落盘，
