@@ -1,4 +1,4 @@
-const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -584,6 +584,11 @@ function attachContextMenu(view) {
             {
                 label: 'Open DevTools Here',
                 click: () => wc.toggleDevTools()
+            },
+            { type: 'separator' },
+            {
+                label: appConfig.lang === 'zh' ? '复制页面地址' : 'Copy page URL',
+                click: () => { try { clipboard.writeText(wc.getURL()); } catch (e) {} }
             }
         ]);
         menu.popup();
