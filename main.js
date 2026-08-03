@@ -69,7 +69,7 @@ const AI_TOOLS = {
     },
     zhipu: {
         name: '智谱清言',
-        url: 'https://www.zhipuai.cn',
+        url: 'https://chatglm.cn',
         icon: '智',
         color: '#4D6BFE',
         needsProxy: false
