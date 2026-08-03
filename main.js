@@ -62,7 +62,7 @@ const AI_TOOLS = {
     },
     qianwen: {
         name: '千问',
-        url: 'https://www.qianwenai.com',
+        url: 'https://qianwen.com',
         icon: '千',
         color: '#FF6A00',
         needsProxy: false
