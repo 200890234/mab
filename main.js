@@ -126,6 +126,8 @@ function saveConfig(patch) {
 // 当前生效配置（启动时读取一次，运行时可能变更）
 let appConfig = { ...DEFAULT_CONFIG };
 function applyTheme(theme) {
+    // 仅切换系统原生控件的明暗（对话框/原生菜单等）。不设置窗口 backgroundColor，
+    // 否则会染色系统边框，在菜单栏底部产生一条可见分隔线（v1.0.0 默认无此设置，故正常）。
     nativeTheme.themeSource = theme === 'light' ? 'light' : 'dark';
 }
 
@@ -297,6 +299,8 @@ function createView(tool, partitionName, initialURL) {
             sandbox: true
         }
     });
+    // 内容视图保持不透明（深色），避免透明窗口下透出桌面；仅侧边栏为磨砂半透明
+    view.setBackgroundColor('#1e1e1e');
 
     const wc = view.webContents;
 
@@ -770,7 +774,7 @@ function createWindow() {
         minWidth: 800,
         minHeight: 600,
         title: `MAB - ${APP_FULL_NAME}`,
-        backgroundColor: '#1e1e1e',
+        backgroundColor: '#1e1e1e',   // 与 v1.0.0 一致：不透明底色，避免菜单栏底部出现系统分隔线
         icon: (() => {
             const ico = path.join(__dirname, 'assets', 'icon.ico');
             const png = path.join(__dirname, 'assets', 'icon.png');
