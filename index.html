@@ -65,46 +65,35 @@
         #viewList::-webkit-scrollbar { width: 4px; }
         #viewList::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 2px; }
 
-        /* 顶栏：设置 / 语言 / 主题 三个按钮 */
+        /* 顶栏：紧凑图标按钮（参考 FastKeys 比例） */
         .app-header {
             display: flex;
-            gap: 6px;
-            padding: 6px 8px 12px;
+            gap: 4px;
+            padding: 4px 6px 8px;
             border-bottom: 1px solid var(--border);
-            margin-bottom: 10px;
+            margin-bottom: 6px;
             flex-shrink: 0;
         }
-        .header-btn {
-            flex: 1;
+        .header-group { position: relative; }
+        .header-icon-btn {
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 4px;
-            padding: 7px 4px;
+            width: 24px;
+            height: 24px;
             background: var(--btn-bg);
             color: var(--text);
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: 5px;
             cursor: pointer;
-            font-size: 12px;
             font-family: inherit;
             transition: background 0.15s, transform 0.1s;
+            padding: 0;
+            flex-shrink: 0;
         }
-        .header-btn:hover { background: var(--btn-hover); }
-        .header-btn:active { transform: scale(0.96); }
-        .header-ico { font-size: 14px; line-height: 1; }
-        .header-text { white-space: nowrap; }
-
-        /* 设置面板内的行内操作（语言/主题） */
-        .row-action {
-            cursor: pointer;
-            color: var(--accent);
-            font-size: 13px;
-            user-select: none;
-            padding: 2px 6px;
-            border-radius: 4px;
-        }
-        .row-action:hover { background: var(--btn-hover); }
+        .header-icon-btn:hover { background: var(--btn-hover); }
+        .header-icon-btn:active { transform: scale(0.96); }
+        .header-icon-btn .header-ico { font-size: 12px; line-height: 1; }
 
         .tool-group-header {
             display: flex;
@@ -112,7 +101,7 @@
             align-items: center;
             padding: 8px 12px 6px 8px;
             font-size: 13px;
-            color: #888;
+            color: var(--text-dim);
             text-transform: uppercase;
             letter-spacing: 0.5px;
             user-select: none;
@@ -121,7 +110,7 @@
         .add-btn {
             background: none;
             border: none;
-            color: #666;
+            color: var(--text-dim);
             cursor: pointer;
             font-size: 16px;
             line-height: 1;
@@ -171,7 +160,7 @@
         .view-item .close-btn {
             background: none;
             border: none;
-            color: #666;
+            color: var(--text-dim);
             cursor: pointer;
             padding: 0 4px;
             font-size: 13px;
@@ -186,7 +175,7 @@
         .view-item .rename-btn {
             background: none;
             border: none;
-            color: #666;
+            color: var(--text-dim);
             cursor: pointer;
             padding: 0 2px;
             font-size: 13px;
@@ -220,43 +209,20 @@
             flex-shrink: 0;
         }
 
-        /* 顶栏左 / 右分区 */
-        .header-left { position: relative; display: flex; }
-        .header-right { display: flex; gap: 6px; }
-
-        /* 仅图标的设置按钮 */
-        .header-icon-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            background: var(--btn-bg);
-            color: var(--text);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            cursor: pointer;
-            font-family: inherit;
-            transition: background 0.15s, transform 0.1s;
-        }
-        .header-icon-btn:hover { background: var(--btn-hover); }
-        .header-icon-btn:active { transform: scale(0.96); }
-        .header-icon-btn .header-ico { font-size: 16px; }
-
         /* 设置面板：在设置按钮正下方弹出 */
         .settings-panel {
             position: absolute;
-            top: 38px;
+            top: 28px;
             left: 0;
-            min-width: 200px;
+            min-width: 180px;
             background: var(--panel-bg);
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: 6px;
             box-shadow: 0 6px 24px rgba(0,0,0,0.5);
-            padding: 8px;
+            padding: 6px;
             display: none;
             flex-direction: column;
-            gap: 4px;
+            gap: 2px;
             z-index: 30;
         }
         .settings-panel.open { display: flex; }
@@ -406,7 +372,7 @@
     <div class="sidebar">
         <div id="resizer" class="sidebar-resizer" title="Drag to resize sidebar"></div>
         <div class="app-header">
-            <div class="header-left">
+            <div class="header-group">
                 <button class="header-icon-btn" id="btnSettings" title="Settings / 设置">
                     <span class="header-ico">⚙️</span>
                 </button>
@@ -435,16 +401,12 @@
                     <!-- 以后新增设置项，按此结构追加 .setting-row 即可 -->
                 </div>
             </div>
-            <div class="header-right">
-                <button class="header-btn" id="btnLang" title="Language / 语言">
-                    <span class="header-ico">🌐</span>
-                    <span class="header-text" id="langText">EN</span>
-                </button>
-                <button class="header-btn" id="btnTheme" title="Theme / 主题">
-                    <span class="header-ico">🌓</span>
-                    <span class="header-text" id="themeText">Dark</span>
-                </button>
-            </div>
+            <button class="header-icon-btn" id="btnLang" title="Language / 语言">
+                <span class="header-ico">🌐</span>
+            </button>
+            <button class="header-icon-btn" id="btnTheme" title="Theme / 主题">
+                <span class="header-ico">🌓</span>
+            </button>
         </div>
 
         <div id="viewList"></div>
@@ -519,8 +481,6 @@
                 const key = el.getAttribute('data-i18n');
                 if (typeof t(key) === 'string') el.textContent = t(key);
             });
-            const langText = document.getElementById('langText');
-            if (langText) langText.textContent = appLang === 'zh' ? 'Cn' : 'En';
             // 高亮 En/Cn 分段
             document.querySelectorAll('#langToggle .seg-opt').forEach(opt => {
                 opt.classList.toggle('active', opt.dataset.lang === appLang);
@@ -530,8 +490,6 @@
         function applyTheme(theme) {
             if (theme === 'light') document.body.classList.add('theme-light');
             else document.body.classList.remove('theme-light');
-            const themeText = document.getElementById('themeText');
-            if (themeText) themeText.textContent = theme === 'light' ? 'Light' : 'Dark';
             // 高亮 Light/Dark 分段
             document.querySelectorAll('#themeToggle .seg-opt').forEach(opt => {
                 opt.classList.toggle('active', opt.dataset.theme === theme);
