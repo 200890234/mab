@@ -1,4 +1,4 @@
-const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -565,6 +565,18 @@ function closeSession(viewKey) {
     }
     const entry = views.get(viewKey);
     if (!entry) return;
+
+    const toolName = (AI_TOOLS[entry.toolKey] && AI_TOOLS[entry.toolKey].name) || entry.toolKey;
+    const { response } = dialog.showMessageBoxSync(mainWindow, {
+        type: 'question',
+        buttons: ['Close', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'Close session',
+        message: `Close "${entry.name || toolName}"?`,
+        detail: 'The session tab will be removed. Login state is kept and can be restored by reopening the same AI tool.',
+    });
+    if (response === 1) return;
 
     // 注意：主动关闭标签不再清除登录态，登录数据由 persist: partition 自动落盘，
     // 关闭后再新建（同一 partition）可保持登录态；如需彻底清除某账号数据，由用户显式触发。
