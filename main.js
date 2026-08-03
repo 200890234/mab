@@ -1,4 +1,4 @@
-const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session, dialog } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -95,7 +95,39 @@ function getUserDataDir() {
 }
 const STATE_FILE = () => path.join(getUserDataDir(), 'sessions.json');
 const AUTOSTART_FILE = () => path.join(getUserDataDir(), 'autostart.json');
+const CONFIG_FILE = () => path.join(getUserDataDir(), 'config.json');
 const STATE_VERSION = 1;
+
+// ---------------- 应用配置（语言 / 主题）持久化 ----------------
+// 存到 userData 目录，与登录态、会话同级。
+const DEFAULT_CONFIG = { lang: 'en', theme: 'dark' };
+function loadConfig() {
+    try {
+        const f = CONFIG_FILE();
+        if (!fs.existsSync(f)) return { ...DEFAULT_CONFIG };
+        const cfg = JSON.parse(fs.readFileSync(f, 'utf8'));
+        return {
+            lang: cfg.lang === 'zh' ? 'zh' : 'en',
+            theme: cfg.theme === 'light' ? 'light' : 'dark'
+        };
+    } catch (e) {
+        return { ...DEFAULT_CONFIG };
+    }
+}
+function saveConfig(patch) {
+    const cfg = { ...loadConfig(), ...patch };
+    try {
+        fs.writeFileSync(CONFIG_FILE(), JSON.stringify(cfg), 'utf8');
+    } catch (e) {
+        console.error('[config] 保存失败:', e);
+    }
+    return cfg;
+}
+// 当前生效配置（启动时读取一次，运行时可能变更）
+let appConfig = { ...DEFAULT_CONFIG };
+function applyTheme(theme) {
+    nativeTheme.themeSource = theme === 'light' ? 'light' : 'dark';
+}
 
 // 开机自启动偏好（独立文件，避免与 sessions 混在一起）
 function getAutoStart() {
@@ -612,14 +644,17 @@ function closeSession(viewKey) {
     if (!entry) return;
 
     const toolName = (AI_TOOLS[entry.toolKey] && AI_TOOLS[entry.toolKey].name) || entry.toolKey;
+    const zh = appConfig.lang === 'zh';
     const response = dialog.showMessageBoxSync(mainWindow, {
         type: 'question',
-        buttons: ['Close', 'Cancel'],
+        buttons: zh ? ['关闭', '取消'] : ['Close', 'Cancel'],
         defaultId: 1,
         cancelId: 1,
-        title: 'Close session',
-        message: `Close "${entry.name || toolName}"?`,
-        detail: 'The session tab will be removed. Login state is kept and can be restored by reopening the same AI tool.',
+        title: zh ? '关闭会话' : 'Close session',
+        message: zh ? `关闭“${entry.name || toolName}”？` : `Close "${entry.name || toolName}"?`,
+        detail: zh
+            ? '会话标签页将被移除。登录状态会保留，重新打开同一 AI 工具即可恢复。'
+            : 'The session tab will be removed. Login state is kept and can be restored by reopening the same AI tool.',
     });
     // showMessageBoxSync 返回按钮索引（数字），Cancel 为 1，选它则中止关闭
     if (response === 1) return;
@@ -668,6 +703,10 @@ function cleanupLegacyPartitions() {
 }
 
 function createWindow() {
+    // 应用已保存的语言 / 主题（app 已 ready，可安全读取 userData）
+    appConfig = loadConfig();
+    applyTheme(appConfig.theme);
+
     const saved = loadState();
     const bounds = saved && saved.windowBounds;
     if (saved && Number.isInteger(saved.sidebarWidth)) {
@@ -791,6 +830,14 @@ ipcMain.on('get-autostart', (event) => {
 });
 ipcMain.on('set-autostart', (_event, enabled) => {
     setAutoStart(enabled);
+});
+// 语言 / 主题配置
+ipcMain.handle('get-config', () => loadConfig());
+ipcMain.handle('set-config', async (_event, patch) => {
+    const cfg = saveConfig(patch || {});
+    appConfig = cfg;
+    if (patch && patch.theme) applyTheme(cfg.theme);
+    return cfg;
 });
 ipcMain.on('reload-view', (_event, viewKey) => {
     const entry = views.get(viewKey);

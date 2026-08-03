@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sidebarResize: (width) => ipcRenderer.send('sidebar-resize', width),
     getAutoStart: () => ipcRenderer.sendSync('get-autostart'),
     setAutoStart: (enabled) => ipcRenderer.send('set-autostart', enabled),
+    getConfig: () => ipcRenderer.invoke('get-config'),
+    setConfig: (patch) => ipcRenderer.invoke('set-config', patch),
 
     // 主进程推送的完整状态（工具列表 + 会话列表 + 当前激活项）
     onStateSync: (cb) => ipcRenderer.on('state-sync', (_e, data) => cb(data)),
