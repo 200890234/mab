@@ -68,10 +68,10 @@
         /* 顶栏：紧凑图标按钮（参考 FastKeys 比例） */
         .app-header {
             display: flex;
-            gap: 4px;
-            padding: 4px 6px 8px;
+            gap: 5px;
+            padding: 6px 8px 9px;
             border-bottom: 1px solid var(--border);
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             flex-shrink: 0;
         }
         .header-group { position: relative; }
@@ -79,12 +79,12 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 24px;
-            height: 24px;
+            width: 28px;
+            height: 28px;
             background: var(--btn-bg);
             color: var(--text);
             border: 1px solid var(--border);
-            border-radius: 5px;
+            border-radius: 6px;
             cursor: pointer;
             font-family: inherit;
             transition: background 0.15s, transform 0.1s;
@@ -93,7 +93,7 @@
         }
         .header-icon-btn:hover { background: var(--btn-hover); }
         .header-icon-btn:active { transform: scale(0.96); }
-        .header-icon-btn .header-ico { font-size: 12px; line-height: 1; }
+        .header-icon-btn .header-ico { font-size: 14px; line-height: 1; }
 
         .tool-group-header {
             display: flex;
@@ -212,7 +212,7 @@
         /* 设置面板：在设置按钮正下方弹出 */
         .settings-panel {
             position: absolute;
-            top: 28px;
+            top: 34px;
             left: 0;
             min-width: 180px;
             background: var(--panel-bg);
