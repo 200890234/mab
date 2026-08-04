@@ -8,7 +8,13 @@
 
 ## 软件截图
 
-![Mervyn 的 AI 浏览器](assets/screenshot.png)
+**浅色模式**
+
+![Mervyn 的 AI 浏览器 — 浅色](assets/screenshot/light.png)
+
+**深色模式**
+
+![Mervyn 的 AI 浏览器 — 深色](assets/screenshot/dark.png)
 
 ## 功能特性
 

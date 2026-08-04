@@ -23,7 +23,7 @@ let mainWindow = null;
 let sidebarView = null;
 
 /** @type {Map<string, {view: WebContentsView, toolKey: string, name: string, partition: string}>} */
-const views = new Map();
+let views = new Map();
 let currentViewKey = null;
 let seqCounter = 0;
 
@@ -641,6 +641,41 @@ function renameSession(viewKey, newName) {
     scheduleSave();
 }
 
+function reorderView(fromKey, toKey, after = false) {
+    if (fromKey === toKey) return;
+    if (!views.has(fromKey) || !views.has(toKey)) return;
+    if (views.get(fromKey).toolKey !== views.get(toKey).toolKey) return; // 仅允许同组内排序
+    const entry = views.get(fromKey);
+    views.delete(fromKey);
+    const newMap = new Map();
+    for (const [k, v] of views) {
+        if (k === toKey) {
+            if (after) {
+                // 插到 toKey 之后：先放 toKey，再放 fromKey
+                newMap.set(k, v);
+                newMap.set(fromKey, entry);
+            } else {
+                // 插到 toKey 之前：先放 fromKey，再放 toKey
+                newMap.set(fromKey, entry);
+                newMap.set(k, v);
+            }
+        } else {
+            newMap.set(k, v);
+        }
+    }
+    // 兜底（理论上不会触发）
+    if (!newMap.has(fromKey)) newMap.set(fromKey, entry);
+    views = newMap;
+    scheduleSave();
+    notifyRenderer('state-sync', {
+        tools: Object.fromEntries(
+            Object.entries(AI_TOOLS).map(([k, t]) => [k, { name: t.name, icon: t.icon, color: t.color, logo: t.logo || null }])
+        ),
+        views: [...views].map(([key, e]) => serializeView(key, e)),
+        activeKey: currentViewKey
+    });
+}
+
 function addSession(toolKey, { notify = true, activate = true, restore = null } = {}) {
     const tool = AI_TOOLS[toolKey];
     if (!tool || !mainWindow) return null;
@@ -900,6 +935,7 @@ ipcMain.on('switch-view', (_event, viewKey) => switchView(viewKey));
 ipcMain.on('create-new-view', (_event, toolKey) => addSession(toolKey));
 ipcMain.on('close-view', (_event, viewKey) => closeSession(viewKey));
 ipcMain.on('rename-view', (_event, viewKey, newName) => renameSession(viewKey, newName));
+ipcMain.on('reorder-view', (_event, fromKey, toKey, after) => reorderView(fromKey, toKey, !!after));
 ipcMain.on('sidebar-resize', (_event, width) => {
     const w = Math.round(Number(width) || sidebarWidth);
     sidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w));

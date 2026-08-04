@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     closeView: (viewKey) => ipcRenderer.send('close-view', viewKey),
     reloadView: (viewKey) => ipcRenderer.send('reload-view', viewKey),
     renameView: (viewKey, newName) => ipcRenderer.send('rename-view', viewKey, newName),
+    reorderView: (fromKey, toKey, after) => ipcRenderer.send('reorder-view', fromKey, toKey, after),
     sidebarResize: (width) => ipcRenderer.send('sidebar-resize', width),
     getAutoStart: () => ipcRenderer.sendSync('get-autostart'),
     setAutoStart: (enabled) => ipcRenderer.send('set-autostart', enabled),

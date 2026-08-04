@@ -8,7 +8,13 @@ English is the default UI language.
 
 ## Screenshot
 
-![Mervyn's AI Browser](assets/screenshot.png)
+**Light mode**
+
+![Mervyn's AI Browser — Light](assets/screenshot/light.png)
+
+**Dark mode**
+
+![Mervyn's AI Browser — Dark](assets/screenshot/dark.png)
 
 ## Features
 

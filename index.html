@@ -141,6 +141,10 @@
             color: var(--text);
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         }
+        /* 拖拽排序视觉反馈 */
+        .view-item.dragging { opacity: 0.4; }
+        .view-item.drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
+        .view-item.drop-after { box-shadow: inset 0 -2px 0 0 var(--accent); }
 
         .view-item .label {
             display: flex;
@@ -632,6 +636,7 @@
             const btn = document.createElement('button');
             btn.className = 'view-item' + (key === activeViewKey ? ' active' : '');
             btn.dataset.key = key;
+            btn.draggable = true;
 
             const label = document.createElement('span');
             label.className = 'label';
@@ -680,10 +685,61 @@
                 startInlineRename(btn, key, item.name);
             });
 
+            // 拖拽排序（仅同组子标签之间）
+            btn.addEventListener('dragstart', (e) => {
+                if (!e.dataTransfer) return;
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', key);
+                dragKey = key;
+                btn.classList.add('dragging');
+            });
+            btn.addEventListener('dragend', () => {
+                dragKey = null;
+                btn.classList.remove('dragging');
+                viewList.querySelectorAll('.view-item.drop-before, .view-item.drop-after')
+                    .forEach(el => el.classList.remove('drop-before', 'drop-after'));
+            });
+            btn.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (!dragKey || dragKey === key) return;
+                if (!e.dataTransfer) return;
+                e.dataTransfer.dropEffect = 'move';
+                const rect = btn.getBoundingClientRect();
+                const after = computeAfter(dragKey, key, e.clientY, rect);
+                btn.classList.toggle('drop-after', after);
+                btn.classList.toggle('drop-before', !after);
+            });
+            btn.addEventListener('dragleave', () => {
+                btn.classList.remove('drop-before', 'drop-after');
+            });
+            btn.addEventListener('drop', (e) => {
+                e.preventDefault();
+                btn.classList.remove('drop-before', 'drop-after');
+                const fromKey = dragKey || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+                if (!fromKey || fromKey === key) return;
+                const rect = btn.getBoundingClientRect();
+                const after = computeAfter(fromKey, key, e.clientY, rect);
+                window.electronAPI.reorderView(fromKey, key, after);
+            });
+
             return btn;
+
         }
 
         let toastTimer = null;
+        let dragKey = null; // 拖拽中的源标签 key
+
+        // 计算插入位置：鼠标在目标项中线以下→插到其后(after=true)，否则之前。
+        // 当源项在目标项下方（往上拖）时，一律插到目标项之前：这样鼠标一进入上方目标项即上移，
+        // 且拖到最顶部项即可到达第一个位置，无需拖过整个项。
+        function computeAfter(fromKey, toKey, clientY, rect) {
+            const items = [...viewList.querySelectorAll('.view-item')];
+            const fromIdx = items.findIndex(el => el.dataset.key === fromKey);
+            const toIdx = items.findIndex(el => el.dataset.key === toKey);
+            if (fromIdx > toIdx) return false; // 往上拖：插入目标前
+            return (clientY - rect.top) > rect.height / 2; // 往下拖：按中线判定
+        }
+
         function showToast(message) {
             const el = document.getElementById('toast');
             el.textContent = message;
