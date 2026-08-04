@@ -277,10 +277,13 @@ function layout() {
         sidebarView.setBounds({ x: 0, y: 0, width: sidebarWidth, height });
     }
     const area = getContentArea();
-    // Only layout the currently visible view; hidden views get correct dimensions when switched to
+    // Refresh bounds for every mounted view so none keeps a stale/zero rect that would
+    // surface as a blank content area after the window is hidden/restored or a view switched.
+    for (const { view } of views.values()) {
+        if (view && view.webContents && !view.webContents.isDestroyed()) view.setBounds(area);
+    }
     const entry = currentViewKey ? views.get(currentViewKey) : null;
     if (entry) entry.view.setBounds(area);
-    void width;
 }
 
 function buildErrorPage(message) {
@@ -370,6 +373,21 @@ function createView(tool, partitionName, initialURL) {
     wc.on('page-title-updated', (_e, title) => {
         syncTitle();
         void title;
+    });
+
+    // Auto-recover from renderer crashes / render-process-gone, which would otherwise
+    // leave the view permanently blank (only the title bar and menu bar remain visible).
+    const recoverView = () => {
+        try {
+            if (!wc.isDestroyed()) wc.reload();
+        } catch (e) {
+            console.error(`view recover failed (${partitionName}):`, e);
+        }
+    };
+    wc.on('crashed', recoverView);
+    wc.on('render-process-gone', (_e, details) => {
+        console.warn(`renderer gone (${partitionName}): ${details && details.reason}`);
+        recoverView();
     });
 
     // Right-click context menu: back/forward/reload/copy/paste etc.
@@ -935,6 +953,9 @@ function createWindow() {
     });
     mainWindow.contentView.addChildView(sidebarView);
     sidebarView.webContents.loadFile(path.join(__dirname, 'index.html'));
+    // Auto-recover the sidebar if its renderer crashes, otherwise the whole UI goes blank
+    sidebarView.webContents.on('crashed', () => { if (!sidebarView.webContents.isDestroyed()) sidebarView.webContents.reload(); });
+    sidebarView.webContents.on('render-process-gone', () => { if (!sidebarView.webContents.isDestroyed()) sidebarView.webContents.reload(); });
 
     // Ctrl+wheel zoom: zoom-preload.js listens inside the renderer and notifies the main process via
     // this channel. e.sender is the content view's webContents that initiated the wheel; setZoomLevel on it.
@@ -949,6 +970,12 @@ function createWindow() {
     mainWindow.on('move', scheduleSave);
     mainWindow.on('maximize', layout);
     mainWindow.on('unmaximize', layout);
+    // Re-layout when the window is restored from minimized / shown again (e.g. after lock screen).
+    // Without this the WebContentsView bounds can stay stale and the content area appears blank
+    // until the next manual resize.
+    mainWindow.on('restore', layout);
+    mainWindow.on('show', layout);
+    mainWindow.on('minimize', layout);
     // Save while the window is still alive, so we can read the real bounds and page URL
     mainWindow.on('close', () => {
         // Window is still alive here, so we can read the real bounds and page URL
