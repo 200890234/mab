@@ -2,7 +2,7 @@
   "name": "mab",
   "productName": "Mervyn's AI Browser",
   "description": "多功能 AI 工具浏览器",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",

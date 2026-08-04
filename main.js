@@ -422,8 +422,8 @@ function getActiveWebContents() {
 }
 
 // Update check state
-let updateAvailable = false;
-let latestVersion = '';
+let updateAvailable = false; // Whether an update is available (set by checkForUpdate)
+let latestVersion = ''; // Latest version string (set by checkForUpdate)
 
 function compareVersions(a, b) {
     const pa = String(a).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
@@ -452,14 +452,23 @@ function checkForUpdate() {
             updateAvailable = newer;
             latestVersion = tag;
             buildAppMenu();
+            pushUpdateInfo();
         }
     }).catch(err => console.error('[update] check failed:', err));
+}
+
+// Push update availability to the sidebar so it can render an HTML badge
+function pushUpdateInfo() {
+    if (sidebarView && !sidebarView.webContents.isDestroyed()) {
+        sidebarView.webContents.send('update-info', { available: updateAvailable, version: latestVersion });
+    }
 }
 
 // Top application menu text (switches with language)
 const MENU_I18N = {
     en: {
-        update: (v) => `Update available ↓ (v${v})`,
+        update: (v) => `Update v${v} ⬇`,
+        checkForUpdates: 'Check for Updates',
         file: 'File',
         newSession: 'New Session',
         quit: 'Quit',
@@ -476,7 +485,8 @@ const MENU_I18N = {
         about: 'About'
     },
     zh: {
-        update: (v) => `有更新 ↓ (v${v})`,
+        update: (v) => `更新 v${v} ⬇`,
+        checkForUpdates: '检查更新',
         file: '文件',
         newSession: '新建会话',
         quit: '退出',
@@ -501,14 +511,6 @@ function menuT() {
 function buildAppMenu() {
     const m = menuT();
     const template = [];
-
-    // When an update exists, show the hint at the very top level (not hidden in a submenu)
-    if (updateAvailable) {
-        template.push({
-            label: m.update(latestVersion),
-            click: () => shell.openExternal('https://github.com/200890234/mab/releases/latest')
-        });
-    }
 
     template.push({
         label: m.file,
@@ -584,9 +586,16 @@ function buildAppMenu() {
                         noLink: true
                     });
                 }
+            },
+            { type: 'separator' },
+            {
+                // Plain "Update / Check for Updates" item without a red dot; opens the Releases download page
+                label: updateAvailable ? m.update(latestVersion) : m.checkForUpdates,
+                click: () => shell.openExternal('https://github.com/200890234/mab/releases/latest')
             }
         ]
     });
+
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
@@ -932,6 +941,8 @@ function createWindow() {
             views: [...views].map(([key, entry]) => serializeView(key, entry)),
             activeKey: currentViewKey
         });
+        // Push update availability so the sidebar can show its HTML badge
+        pushUpdateInfo();
     });
 
     layout();
@@ -947,6 +958,7 @@ app.whenReady().then(() => {
 
 // IPC communication
 ipcMain.on('switch-view', (_event, viewKey) => switchView(viewKey));
+ipcMain.on('open-external', (_event, url) => { if (url) shell.openExternal(url); });
 ipcMain.on('create-new-view', (_event, toolKey) => addSession(toolKey));
 ipcMain.on('close-view', (_event, viewKey) => closeSession(viewKey));
 ipcMain.on('rename-view', (_event, viewKey, newName) => renameSession(viewKey, newName));

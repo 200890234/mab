@@ -94,6 +94,36 @@
         .header-icon-btn:active { transform: scale(0.96); }
         .header-icon-btn .header-ico { font-size: 14px; line-height: 1; }
 
+        /* Update notification badge: flat solid red dot + label, click opens download page */
+        .update-badge {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            margin-left: 2px;
+            padding: 0 8px;
+            height: 28px;
+            background: var(--btn-bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            flex-shrink: 0;
+            transition: background 0.15s, transform 0.1s;
+        }
+        .update-badge:hover { background: var(--btn-hover); }
+        .update-badge:active { transform: scale(0.96); }
+        /* Flat solid red dot, top-right offset on the badge */
+        .update-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #FF4D4F;
+            flex-shrink: 0;
+        }
+
         .tool-group-header {
             display: flex;
             justify-content: space-between;
@@ -410,6 +440,11 @@
             <button class="header-icon-btn" id="btnTheme" title="Theme / 主题">
                 <span class="header-ico">🌓</span>
             </button>
+            <!-- 更新通知徽章：扁平纯色红点 + 版本号，点击打开下载页；有更新时显示，无更新时隐藏 -->
+            <button class="update-badge" id="updateBadge" title="Update available" hidden>
+                <span class="update-dot"></span>
+                <span class="update-text" id="updateText">Update</span>
+            </button>
         </div>
 
         <div id="viewList"></div>
@@ -473,6 +508,7 @@
             }
         };
         let appLang = 'en';
+        let updateBadgeEl = null, updateTextEl = null, lastUpdateInfo = null;
         function t(key) {
             const dict = I18N[appLang] || I18N.en;
             return dict[key] !== undefined ? dict[key] : (I18N.en[key] !== undefined ? I18N.en[key] : key);
@@ -488,6 +524,11 @@
             document.querySelectorAll('#langToggle .seg-opt').forEach(opt => {
                 opt.classList.toggle('active', opt.dataset.lang === appLang);
             });
+            // Keep the update badge text in sync with the current language
+            if (updateBadgeEl) {
+                const isZh = appLang === 'zh';
+                updateTextEl.textContent = (isZh ? '更新 ' : 'Update ') + (lastUpdateInfo && lastUpdateInfo.version ? lastUpdateInfo.version : '');
+            }
         }
 
         function applyTheme(theme) {
@@ -843,6 +884,25 @@
         viewList.addEventListener('click', (e) => {
             const addBtn = e.target.closest('.add-btn');
             if (addBtn) window.electronAPI.createView(addBtn.dataset.tool);
+        });
+
+        // Update notification badge
+        updateBadgeEl = document.getElementById('updateBadge');
+        updateTextEl = document.getElementById('updateText');
+        const renderUpdateBadge = () => {
+            if (lastUpdateInfo && lastUpdateInfo.available) {
+                updateTextEl.textContent = (appLang === 'zh' ? '更新 ' : 'Update ') + (lastUpdateInfo.version || '');
+                updateBadgeEl.hidden = false;
+            } else {
+                updateBadgeEl.hidden = true;
+            }
+        };
+        window.electronAPI.onUpdateInfo((info) => {
+            lastUpdateInfo = info;
+            renderUpdateBadge();
+        });
+        updateBadgeEl.addEventListener('click', () => {
+            window.electronAPI.openExternal('https://github.com/200890234/mab/releases/latest');
         });
     </script>
 </body>

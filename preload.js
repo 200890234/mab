@@ -27,5 +27,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onViewClosed: (cb) => ipcRenderer.on('view-closed', (_e, viewKey) => cb(viewKey)),
     onViewSwitched: (cb) => ipcRenderer.on('view-switched', (_e, viewKey) => cb(viewKey)),
     onViewRenamed: (cb) => ipcRenderer.on('view-renamed', (_e, data) => cb(data)),
-    onNotification: (cb) => ipcRenderer.on('show-notification', (_e, message) => cb(message))
+    onNotification: (cb) => ipcRenderer.on('show-notification', (_e, message) => cb(message)),
+    openExternal: (url) => ipcRenderer.send('open-external', url),
+    onUpdateInfo: (cb) => ipcRenderer.on('update-info', (_e, info) => cb(info))
 });
