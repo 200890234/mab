@@ -457,6 +457,59 @@ function checkForUpdate() {
     }).catch(err => console.error('[update] check failed:', err));
 }
 
+// Check for updates on demand (triggered by the Help > Check for Updates menu item) and
+// show a dialog with the result instead of jumping straight to the download page.
+function checkForUpdateAndNotify() {
+    const isZh = appConfig.lang === 'zh';
+    const current = app.getVersion();
+    fetch('https://api.github.com/repos/200890234/mab/releases/latest', {
+        headers: { 'User-Agent': 'mab-updater' }
+    }).then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    }).then(data => {
+        const tag = (data.tag_name || '').replace(/^v/, '');
+        const body = data.body || '';
+        const newer = compareVersions(tag, current) > 0;
+        // Keep the silent state (badge + menu label) in sync
+        if (newer !== updateAvailable || tag !== latestVersion) {
+            updateAvailable = newer;
+            latestVersion = tag;
+            buildAppMenu();
+            pushUpdateInfo();
+        }
+        if (newer) {
+            dialog.showMessageBox(mainWindow, {
+                type: 'info',
+                title: isZh ? '发现新版本' : 'Update Available',
+                message: isZh ? `新版本 v${tag} 已发布` : `Version v${tag} is available`,
+                detail: (isZh ? `当前版本：v${current}\n\n更新内容：\n` : `Current version: v${current}\n\nRelease notes:\n`) + body,
+                buttons: [isZh ? '打开下载页' : 'Open Download', isZh ? '稍后' : 'Later'],
+                noLink: true
+            }).then(({ response }) => {
+                if (response === 0) shell.openExternal('https://github.com/200890234/mab/releases/latest');
+            });
+        } else {
+            dialog.showMessageBox(mainWindow, {
+                type: 'info',
+                title: isZh ? '已是最新' : 'Up to Date',
+                message: isZh ? `当前已是最新版本 v${current}` : `You are on the latest version v${current}`,
+                buttons: [isZh ? '确定' : 'OK'],
+                noLink: true
+            });
+        }
+    }).catch(err => {
+        console.error('[update] check failed:', err);
+        dialog.showMessageBox(mainWindow, {
+            type: 'error',
+            title: isZh ? '检查更新失败' : 'Update Check Failed',
+            message: isZh ? '无法连接到更新服务器，请稍后重试。' : 'Could not reach the update server. Please try again later.',
+            buttons: [isZh ? '确定' : 'OK'],
+            noLink: true
+        });
+    });
+}
+
 // Push update availability to the sidebar so it can render an HTML badge
 function pushUpdateInfo() {
     if (sidebarView && !sidebarView.webContents.isDestroyed()) {
@@ -589,9 +642,10 @@ function buildAppMenu() {
             },
             { type: 'separator' },
             {
-                // Plain "Update / Check for Updates" item without a red dot; opens the Releases download page
+                // "Check for Updates": probe GitHub, then show a dialog with the result
+                // (available version, release notes, and an option to open the download page)
                 label: updateAvailable ? m.update(latestVersion) : m.checkForUpdates,
-                click: () => shell.openExternal('https://github.com/200890234/mab/releases/latest')
+                click: () => checkForUpdateAndNotify()
             }
         ]
     });
