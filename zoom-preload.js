@@ -1,13 +1,13 @@
-// 仅注入到内容视图（WebContentsView）的轻量预加载脚本。
-// 作用：在渲染进程内监听 Ctrl+鼠标滚轮，通过 IPC 通知主进程缩放，
-// 比主进程监听 mouse-wheel 事件更可靠（不受网页自身处理 wheel 的影响）。
+// Lightweight preload script injected only into content views (WebContentsView).
+// Purpose: listen for Ctrl+wheel inside the renderer and notify the main process to zoom via IPC.
+// This is more reliable than the main process listening to mouse-wheel (unaffected by the page's own wheel handling).
 const { ipcRenderer } = require('electron');
 
 window.addEventListener('wheel', (e) => {
-    // 仅当按下 Ctrl 时才接管，否则让网页正常滚动
+    // Only take over when Ctrl is held; otherwise let the page scroll normally
     if (!e.ctrlKey) return;
-    // 阻止 Chromium 原生 Ctrl+滚轮缩放（避免与我们手动设置叠加成双重缩放）
+    // Prevent Chromium's native Ctrl+wheel zoom (avoid double-zoom stacking with our manual setting)
     e.preventDefault();
-    const delta = e.deltaY < 0 ? 1 : -1; // 上滚放大，下滚缩小
+    const delta = e.deltaY < 0 ? 1 : -1; // scroll up = zoom in, scroll down = zoom out
     ipcRenderer.send('zoom-wheel', delta);
 }, { passive: false });

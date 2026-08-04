@@ -9,7 +9,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
-        /* 主题变量：默认深色，body.theme-light 覆盖为浅色 */
+        /* Theme variables: dark by default, body.theme-light overrides for light */
         :root {
             --bg: #2d2d2d;
             --text: #e0e0e0;
@@ -65,7 +65,7 @@
         #viewList::-webkit-scrollbar { width: 4px; }
         #viewList::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 2px; }
 
-        /* 顶栏：紧凑图标按钮（参考 FastKeys 比例） */
+        /* Top bar: compact icon buttons (referencing FastKeys proportions) */
         .app-header {
             display: flex;
             gap: 4px;
@@ -141,7 +141,7 @@
             color: var(--text);
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         }
-        /* 拖拽排序视觉反馈 */
+        /* Drag-to-reorder visual feedback */
         .view-item.dragging { opacity: 0.4; }
         .view-item.drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
         .view-item.drop-after { box-shadow: inset 0 -2px 0 0 var(--accent); }
@@ -212,7 +212,7 @@
             flex-shrink: 0;
         }
 
-        /* 设置面板：在设置按钮正下方弹出 */
+        /* Settings panel: pops up directly below the settings button */
         .settings-panel {
             position: absolute;
             top: 34px;
@@ -229,7 +229,7 @@
             z-index: 30;
         }
         .settings-panel.open { display: flex; }
-        /* 通用设置项行 */
+        /* Generic settings row */
         .setting-row {
             display: flex;
             align-items: center;
@@ -241,7 +241,7 @@
         }
         .setting-row + .setting-row { border-top: 1px solid var(--border); }
 
-        /* En/Cn、Light/Dark 分段切换控件 */
+        /* En/Cn and Light/Dark segmented toggle control */
         .seg {
             display: inline-flex;
             border: 1px solid var(--border);
@@ -262,7 +262,7 @@
             color: #fff;
         }
 
-        /* 开关（复用） */
+        /* Toggle switch (reused) */
         .switch {
             position: relative;
             width: 36px;
@@ -299,7 +299,7 @@
             flex-shrink: 0;
         }
 
-        /* 品牌色字母圆标 */
+        /* Brand-colored letter badge */
         .badge {
             display: inline-flex;
             align-items: center;
@@ -354,7 +354,7 @@
         }
         .toast.show { opacity: 1; }
 
-        /* 侧边栏右侧拖拽手柄 */
+        /* Sidebar right-edge drag handle */
         .sidebar-resizer {
             position: fixed;
             top: 0;
@@ -401,7 +401,7 @@
                             <span class="seg-opt" data-theme="dark">Dark</span>
                         </span>
                     </div>
-                    <!-- 以后新增设置项，按此结构追加 .setting-row 即可 -->
+                    <!-- To add more settings later, append a .setting-row following this structure -->
                 </div>
             </div>
             <button class="header-icon-btn" id="btnLang" title="Language / 语言">
@@ -422,7 +422,7 @@
     <div class="toast" id="toast"></div>
 
     <script>
-        // 侧边栏宽度拖拽
+        // Sidebar width drag
         (function () {
             const resizer = document.getElementById('resizer');
             let dragging = false;
@@ -435,7 +435,7 @@
             });
             window.addEventListener('mousemove', (e) => {
                 if (!dragging) return;
-                // clientX 即相对侧边栏内部的目标宽度
+                // clientX is the target width relative to the sidebar interior
                 window.electronAPI.sidebarResize(e.clientX);
             });
             window.addEventListener('mouseup', () => {
@@ -447,7 +447,7 @@
             });
         })();
 
-        // ---------------- 语言 / 主题配置 ----------------
+        // ---------------- Language / theme config ----------------
         const I18N = {
             en: {
                 settings: 'Settings',
@@ -484,7 +484,7 @@
                 const key = el.getAttribute('data-i18n');
                 if (typeof t(key) === 'string') el.textContent = t(key);
             });
-            // 高亮 En/Cn 分段
+            // Highlight the En/Cn segments
             document.querySelectorAll('#langToggle .seg-opt').forEach(opt => {
                 opt.classList.toggle('active', opt.dataset.lang === appLang);
             });
@@ -493,7 +493,7 @@
         function applyTheme(theme) {
             if (theme === 'light') document.body.classList.add('theme-light');
             else document.body.classList.remove('theme-light');
-            // 高亮 Light/Dark 分段
+            // Highlight the Light/Dark segments
             document.querySelectorAll('#themeToggle .seg-opt').forEach(opt => {
                 opt.classList.toggle('active', opt.dataset.theme === theme);
             });
@@ -525,7 +525,7 @@
             applyTheme(next);
         }
 
-        // 设置面板：点击设置图标在按钮下方展开/收起
+        // Settings panel: click the gear icon to expand/collapse below the button
         (function () {
             const btn = document.getElementById('btnSettings');
             const panel = document.getElementById('settingsPanel');
@@ -534,7 +534,7 @@
                 panel.classList.toggle('open');
             });
 
-            // 点击面板外部任意位置自动收起
+            // Auto-collapse when clicking anywhere outside the panel
             document.addEventListener('click', (e) => {
                 if (panel.classList.contains('open')
                     && !panel.contains(e.target)
@@ -543,7 +543,7 @@
                 }
             });
 
-            // 顶栏语言 / 主题按钮（与面板内分段等效）
+            // Top-bar language / theme buttons (equivalent to the in-panel segments)
             document.getElementById('btnLang').addEventListener('click', (e) => {
                 e.stopPropagation();
                 toggleLang();
@@ -553,7 +553,7 @@
                 toggleTheme();
             });
 
-            // 面板内的 En/Cn、Light/Dark 分段切换
+            // In-panel En/Cn and Light/Dark segment switching
             document.getElementById('langToggle').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const opt = e.target.closest('.seg-opt');
@@ -565,7 +565,7 @@
                 if (opt) { applyThemeChoice(opt.dataset.theme); }
             });
 
-            // 开机自动启动开关（面板内第一项）
+            // Launch-at-startup toggle (first item in the panel)
             const toggle = document.getElementById('autostartToggle');
             try { toggle.checked = !!window.electronAPI.getAutoStart(); } catch (e) {}
             toggle.addEventListener('change', () => {
@@ -573,7 +573,7 @@
             });
         })();
 
-        // 状态完全来自主进程，避免两端硬编码不一致
+        // State comes entirely from the main process, to avoid duplicated hardcoded logic on both ends
         let AI_TOOLS = {};
         let views = new Map();       // key -> { toolKey, name, icon, color }
         let activeViewKey = null;
@@ -583,7 +583,7 @@
         function renderSidebar() {
             viewList.innerHTML = '';
 
-            // 所有已知工具都渲染分组标题，便于随时新建会话
+            // Render a group header for every known tool, so new sessions can be created anytime
             const toolKeys = Object.keys(AI_TOOLS);
 
             toolKeys.forEach(toolKey => {
@@ -607,7 +607,7 @@
                     hdrBadge.className = 'badge';
                     hdrBadge.textContent = tool.icon;
                     hdrBadge.style.background = tool.color;
-                    // 字母较多时缩小字号，避免拥挤（如 GPT）
+                    // Shrink font size for longer labels (e.g. GPT) to avoid crowding
                     hdrBadge.style.fontSize = tool.icon.length >= 3 ? '8px' : '11px';
                     label.appendChild(hdrBadge);
                 }
@@ -647,9 +647,9 @@
 
             const name = document.createElement('span');
             name.className = 'name';
-            // 用 textContent 而非 innerHTML，避免标题注入
+            // Use textContent instead of innerHTML, to avoid title injection
             name.textContent = item.name;
-            // 仅当名称被截断（溢出）时才显示 tooltip，避免短名称也弹提示
+            // Only show a tooltip when the name is truncated (overflowing), so short names don't pop a hint
             requestAnimationFrame(() => {
                 name.title = name.scrollWidth > name.clientWidth + 1 ? item.name : '';
             });
@@ -685,7 +685,7 @@
                 startInlineRename(btn, key, item.name);
             });
 
-            // 拖拽排序（仅同组子标签之间）
+            // Drag-to-reorder (only within the same group's sub-tabs)
             btn.addEventListener('dragstart', (e) => {
                 if (!e.dataTransfer) return;
                 e.dataTransfer.effectAllowed = 'move';
@@ -727,17 +727,18 @@
         }
 
         let toastTimer = null;
-        let dragKey = null; // 拖拽中的源标签 key
+        let dragKey = null; // key of the source tab being dragged
 
-        // 计算插入位置：鼠标在目标项中线以下→插到其后(after=true)，否则之前。
-        // 当源项在目标项下方（往上拖）时，一律插到目标项之前：这样鼠标一进入上方目标项即上移，
-        // 且拖到最顶部项即可到达第一个位置，无需拖过整个项。
+        // Compute the insert position: below the target item's midline -> insert after (after=true), otherwise before.
+        // When the source is below the target (dragging up), always insert before the target: so as soon as the
+        // mouse enters an upper target item it moves up, and dragging to the very top item reaches position one
+        // without dragging across the whole item.
         function computeAfter(fromKey, toKey, clientY, rect) {
             const items = [...viewList.querySelectorAll('.view-item')];
             const fromIdx = items.findIndex(el => el.dataset.key === fromKey);
             const toIdx = items.findIndex(el => el.dataset.key === toKey);
-            if (fromIdx > toIdx) return false; // 往上拖：插入目标前
-            return (clientY - rect.top) > rect.height / 2; // 往下拖：按中线判定
+            if (fromIdx > toIdx) return false; // dragging up: insert before target
+            return (clientY - rect.top) > rect.height / 2; // dragging down: judge by midline
         }
 
         function showToast(message) {
@@ -748,7 +749,7 @@
             toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
         }
 
-        // 启动时先应用已保存的语言/主题，再做后续渲染
+        // Apply saved language/theme at startup before any further rendering
         loadConfigAndApply();
 
         window.electronAPI.onStateSync((data) => {
@@ -770,7 +771,7 @@
             renderSidebar();
         });
 
-        // 激活态由主进程驱动，保证 UI 与真实视图一致
+        // Activation is driven by the main process, to keep the UI consistent with the real view
         window.electronAPI.onViewSwitched((viewKey) => {
             activeViewKey = viewKey;
             renderSidebar();
@@ -780,15 +781,15 @@
 
         function doRename(key, currentName) {
             const input = prompt('Rename session label:', currentName);
-            if (input === null) return; // 取消
+            if (input === null) return; // canceled
             const name = input.trim();
             if (!name) return;
             window.electronAPI.renameView(key, name);
         }
 
-        // 内联编辑：把标签名替换成输入框，回车/失焦提交，Esc 取消
+        // Inline edit: replace the label with an input box; submit on Enter/blur, cancel on Esc
         function startInlineRename(btn, key, currentName) {
-            if (btn.querySelector('input.rename-input')) return; // 已在编辑
+            if (btn.querySelector('input.rename-input')) return; // already editing
             const nameSpan = btn.querySelector('.name');
             if (!nameSpan) return;
             const input = document.createElement('input');
@@ -808,7 +809,7 @@
                 if (name && name !== currentName) {
                     window.electronAPI.renameView(key, name);
                 } else {
-                    // 恢复原显示
+                    // Restore original display
                     const span = document.createElement('span');
                     span.className = 'name';
                     span.textContent = currentName;
@@ -829,7 +830,7 @@
                 else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
             });
             input.addEventListener('blur', commit);
-            // 阻止点击输入框时触发标签切换
+            // Prevent clicking the input from triggering a tab switch
             input.addEventListener('click', (e) => e.stopPropagation());
         }
 

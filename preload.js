@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Ctrl+滚轮缩放（侧边栏自身也需要）：交给主进程统一处理
+// Ctrl+wheel zoom (the sidebar itself needs it too): delegate to the main process for unified handling
 window.addEventListener('wheel', (e) => {
     if (!e.ctrlKey) return;
     e.preventDefault();
@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getConfig: () => ipcRenderer.invoke('get-config'),
     setConfig: (patch) => ipcRenderer.invoke('set-config', patch),
 
-    // 主进程推送的完整状态（工具列表 + 会话列表 + 当前激活项）
+    // Full state pushed by the main process (tool list + session list + current active item)
     onStateSync: (cb) => ipcRenderer.on('state-sync', (_e, data) => cb(data)),
     onViewCreated: (cb) => ipcRenderer.on('view-created', (_e, data) => cb(data)),
     onViewClosed: (cb) => ipcRenderer.on('view-closed', (_e, viewKey) => cb(viewKey)),
