@@ -1,5 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Ctrl+滚轮缩放（侧边栏自身也需要）：交给主进程统一处理
+window.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 1 : -1;
+    ipcRenderer.send('zoom-wheel', delta);
+}, { passive: false });
+
 contextBridge.exposeInMainWorld('electronAPI', {
     switchView: (viewKey) => ipcRenderer.send('switch-view', viewKey),
     createView: (toolKey) => ipcRenderer.send('create-new-view', toolKey),

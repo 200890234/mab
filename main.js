@@ -126,9 +126,17 @@ function saveConfig(patch) {
 // 当前生效配置（启动时读取一次，运行时可能变更）
 let appConfig = { ...DEFAULT_CONFIG };
 function applyTheme(theme) {
-    // 仅切换系统原生控件的明暗（对话框/原生菜单等）。不设置窗口 backgroundColor，
-    // 否则会染色系统边框，在菜单栏底部产生一条可见分隔线（v1.0.0 默认无此设置，故正常）。
     nativeTheme.themeSource = theme === 'light' ? 'light' : 'dark';
+    // 浅色模式下把窗口底色设为与侧边栏一致 #ECEFF4，让菜单栏底部的系统分隔线混色、尽量不可见；
+    // 深色模式保持 #1e1e1e，与深色侧边栏融为一体。
+    if (mainWindow && mainWindow.setBackgroundColor) {
+        try { mainWindow.setBackgroundColor(theme === 'light' ? '#ECEFF4' : '#1e1e1e'); } catch (e) {}
+    }
+    // 同步所有已打开内容视图的底色,切换主题时立即生效
+    const bg = theme === 'light' ? '#ECEFF4' : '#1e1e1e';
+    views.forEach(entry => {
+        try { entry.view.setBackgroundColor(bg); } catch (e) {}
+    });
 }
 
 // 开机自启动偏好（独立文件，避免与 sessions 混在一起）
@@ -296,13 +304,22 @@ function createView(tool, partitionName, initialURL) {
             partition: `persist:${partitionName}`, // 隔离 + 登录态落盘的关键
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: true
+            sandbox: true,
+            preload: path.join(__dirname, 'zoom-preload.js')
         }
     });
-    // 内容视图保持不透明（深色），避免透明窗口下透出桌面；仅侧边栏为磨砂半透明
-    view.setBackgroundColor('#1e1e1e');
+    // 内容视图背景跟随主题：浅色 #ECEFF4 / 深色 #1e1e1e，
+    // 使菜单栏底部的系统分隔线在两侧都能混色淡化。
+    view.setBackgroundColor(appConfig.theme === 'light' ? '#ECEFF4' : '#1e1e1e');
 
     const wc = view.webContents;
+
+    // Ctrl+滚轮缩放由 zoom-preload.js（渲染进程）监听后通过 'zoom-wheel' 通知主进程执行，
+    // 比主进程监听 mouse-wheel 更可靠（不受网页自身处理 wheel 事件的影响）。
+    // Ctrl+0 还原为 100%
+    wc.on('before-input-event', (event, input) => {
+        if (input.control && input.key === '0') { event.preventDefault(); wc.setZoomLevel(0); }
+    });
 
     // 仅对需要代理的站点设置代理，避免无代理时全部站点打不开
     const proxyPromise = (PROXY_RULES && tool.needsProxy)
@@ -530,9 +547,9 @@ function buildAppMenu() {
                 click: () => { const wc = getActiveWebContents(); if (wc) wc.reloadIgnoringCache(); }
             },
             { type: 'separator' },
-            { role: 'resetZoom', label: m.resetZoom },
-            { role: 'zoomIn', label: m.zoomIn },
-            { role: 'zoomOut', label: m.zoomOut }
+            { role: 'resetZoom', label: m.resetZoom, accelerator: 'CommandOrControl+0' },
+            { role: 'zoomIn', label: m.zoomIn, accelerator: 'CommandOrControl+=' },
+            { role: 'zoomOut', label: m.zoomOut, accelerator: 'CommandOrControl+-' }
         ]
     });
 
@@ -563,6 +580,7 @@ function buildAppMenu() {
 // 右键上下文菜单（绑定到某个 WebContentsView）
 function attachContextMenu(view) {
     const wc = view.webContents;
+
     wc.on('context-menu', (_e, params) => {
         const menu = Menu.buildFromTemplate([
             {
@@ -804,6 +822,15 @@ function createWindow() {
     });
     mainWindow.contentView.addChildView(sidebarView);
     sidebarView.webContents.loadFile(path.join(__dirname, 'index.html'));
+
+    // Ctrl+滚轮缩放：由 zoom-preload.js 在渲染进程内监听后通过此通道通知主进程。
+    // e.sender 即发起滚轮的内容视图 webContents，直接对其 setZoomLevel。
+    ipcMain.on('zoom-wheel', (e, delta) => {
+        const wc = e.sender;
+        if (!wc || wc.isDestroyed()) return;
+        const lvl = wc.getZoomLevel(); // 同步返回值（number）
+        wc.setZoomLevel(lvl + delta);
+    });
 
     mainWindow.on('resize', () => { layout(); scheduleSave(); });
     mainWindow.on('move', scheduleSave);
