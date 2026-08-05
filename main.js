@@ -237,13 +237,12 @@ function saveState() {
 function getLiveURL(entry) {
     try {
         const wc = entry.view.webContents;
-        if (wc.isDestroyed()) return entry.lastURL || null;
         const url = wc.getURL();
         // data: error pages are not worth saving; fall back to the tool's home page
         if (!url || url.startsWith('data:')) return null;
         return url;
     } catch {
-        return entry.lastURL || null;
+        return null;
     }
 }
 
@@ -410,7 +409,7 @@ function switchView(viewKey) {
     if (!entry || !mainWindow) return false;
     if (currentViewKey === viewKey && entry.view.getVisible()) return true;
 
-    // Hide the other views (keep them mounted so page state is preserved and not replaced)
+    // Hide the other views (keep them mounted so page state is preserved)
     for (const [key, item] of views) {
         item.view.setVisible(key === viewKey);
     }
@@ -808,8 +807,7 @@ function addSession(toolKey, { notify = true, activate = true, restore = null } 
         view,
         toolKey,
         name,
-        partition: partitionName,
-        lastURL: (restore && restore.url) || tool.url
+        partition: partitionName
     };
     views.set(viewKey, entry);
 
