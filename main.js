@@ -16,7 +16,8 @@ let sidebarWidth = 220;
 const SIDEBAR_MIN_WIDTH = 140;
 const SIDEBAR_MAX_WIDTH = 480;
 
-// Proxy config: null means direct connection. Can be overridden via the AI_BROWSER_PROXY env var.
+// Proxy config: null means "follow system proxy" (so Clash system-proxy / TUN mode applies).
+// Set AI_BROWSER_PROXY to explicit rules (e.g. http://127.0.0.1:7890) to override.
 const PROXY_RULES = process.env.AI_BROWSER_PROXY || null;
 
 let mainWindow = null;
@@ -325,11 +326,19 @@ function createView(tool, partitionName, initialURL) {
         if (input.control && input.key === '0') { event.preventDefault(); wc.setZoomLevel(0); }
     });
 
-    // Only set a proxy for sites that need it, so that without a proxy all sites still open
-    const proxyPromise = (PROXY_RULES && tool.needsProxy)
-        ? wc.session.setProxy({ proxyRules: PROXY_RULES })
-            .catch(err => console.error(`代理设置失败 (${partitionName}):`, err))
-        : Promise.resolve();
+    // Proxy behavior:
+    // - If AI_BROWSER_PROXY is set, use those explicit rules (overrides system).
+    // - Otherwise follow the system proxy (so Clash's "System Proxy" / "TUN" mode is picked up
+    //   automatically and its rules apply to every site, not just needsProxy ones).
+    // This lets Clash control routing (rules / global / TUN) for all tabs.
+    let proxyPromise;
+    if (PROXY_RULES) {
+        proxyPromise = wc.session.setProxy({ proxyRules: PROXY_RULES })
+            .catch(err => console.error(`代理设置失败 (${partitionName}):`, err));
+    } else {
+        proxyPromise = wc.session.setProxy({ mode: 'system' })
+            .catch(err => console.error(`系统代理设置失败 (${partitionName}):`, err));
+    }
 
     const target = initialURL || tool.url;
 
