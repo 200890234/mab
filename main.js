@@ -1287,7 +1287,12 @@ ipcMain.handle('set-config', async (_event, patch) => {
     const langChanged = patch && appConfig.lang !== cfg.lang;
     appConfig = cfg;
     if (patch && patch.theme) applyTheme(cfg.theme);
-    if (langChanged) syncMenu(); // rebuild the custom toolbar menu when language changes
+    if (langChanged) {
+        syncMenu(); // rebuild the custom toolbar menu when language changes
+        if (toolbarView && !toolbarView.webContents.isDestroyed()) {
+            toolbarView.webContents.send('lang-changed', cfg.lang);
+        }
+    }
     return cfg;
 });
 ipcMain.on('reload-view', (_event, viewKey) => {

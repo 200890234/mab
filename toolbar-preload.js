@@ -14,5 +14,7 @@ contextBridge.exposeInMainWorld('toolbarAPI', {
     // Title bar: sidebar width sync (aligns the web-tool area with the content area below)
     onSidebarWidth: (cb) => ipcRenderer.on('set-sidebar-width', (_e, w) => cb(w)),
     // Theme
-    onThemeChanged: (cb) => ipcRenderer.on('theme-changed', (_e, theme) => cb(theme))
+    onThemeChanged: (cb) => ipcRenderer.on('theme-changed', (_e, theme) => cb(theme)),
+    // Language
+    onLangChanged: (cb) => ipcRenderer.on('lang-changed', (_e, lang) => cb(lang))
 });

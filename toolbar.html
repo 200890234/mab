@@ -41,7 +41,6 @@
         min-width: 0;
         height: 100%;
         background: var(--bg);
-        border-right: 1px solid var(--border);
         position: relative;
     }
     .tb-right {
@@ -171,8 +170,8 @@
             <div class="add-form" id="addForm">
                 <input id="urlInput" type="text" placeholder="https://example.com" />
                 <div class="row">
-                    <button class="ok" id="okBtn">添加</button>
-                    <button class="cancel" id="cancelBtn">取消</button>
+                    <button class="ok" id="okBtn">Add</button>
+                    <button class="cancel" id="cancelBtn">Cancel</button>
                 </div>
             </div>
         </div>
@@ -248,6 +247,22 @@
     window.toolbarAPI.onThemeChanged((theme) => {
         document.documentElement.classList.toggle('light', theme === 'light');
     });
+
+    // ---- Language ----
+    let currentLang = 'en';
+    const L10N = {
+        add: { en: 'Add', zh: '添加' },
+        cancel: { en: 'Cancel', zh: '取消' },
+        addTitle: { en: 'Add web tool', zh: '添加网页工具' },
+    };
+    function applyLang(lang) {
+        currentLang = lang === 'zh' ? 'zh' : 'en';
+        okBtn.textContent = L10N.add[currentLang];
+        cancelBtn.textContent = L10N.cancel[currentLang];
+        addBtn.title = L10N.addTitle[currentLang];
+    }
+    window.toolbarAPI.onLangChanged((lang) => applyLang(lang));
+    applyLang(currentLang);
     window.toolbarAPI.onSidebarWidth((w) => {
         // Keep the left menu area aligned with the sidebar below, and the right tool area
         // aligned with the content area below.
