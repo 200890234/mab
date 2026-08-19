@@ -64,9 +64,8 @@
             background: var(--sidebar-bg);
         }
 
-        #viewList { flex: 1; overflow-y: auto; overflow-x: hidden; }
-        #viewList::-webkit-scrollbar { width: 4px; }
-        #viewList::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 2px; }
+        #viewList { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; -ms-overflow-style: none; }
+        #viewList::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
         /* Top bar: compact icon buttons (referencing FastKeys proportions) */
         .app-header {
