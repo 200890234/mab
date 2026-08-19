@@ -333,6 +333,19 @@ function layout() {
             toolbarView.webContents.send('set-sidebar-width', sidebarWidth);
         }
     }
+    // Nudge the sidebar's renderer to re-sync its viewport to the bounds. Repeated calls
+    // (see kickLayout) are what actually clear the startup blank strip at the bottom.
+    if (sidebarView && !sidebarView.webContents.isDestroyed()) {
+        try { sidebarView.webContents.invalidate(); } catch (e) {}
+    }
+}
+
+// On first launch the sidebar's internal viewport can lag behind its bounds, leaving a
+// blank strip at the bottom (resizing the window fixes it). Repeatedly re-running layout
+// a few times during startup has the same effect as dragging the window — it forces the
+// webContents to re-sync. We space these out so they stay lightweight (no render storm).
+function kickLayout() {
+    [120, 320, 620, 1100, 1800].forEach((ms) => setTimeout(() => { if (mainWindow) layout(); }, ms));
 }
 
 function buildErrorPage(message) {
@@ -479,6 +492,16 @@ function switchView(viewKey) {
     // Ensure it is mounted and brought to the top
     mainWindow.contentView.addChildView(entry.view);
     entry.view.setBounds(getContentArea());
+
+    // Work around an Electron quirk where the first time a WebContentsView becomes
+    // visible its internal viewport can be smaller than the view bounds, leaving a
+    // blank strip at the bottom. Re-apply the bounds once the renderer has laid out
+    // and force a repaint so the page fills the entire content area.
+    setTimeout(() => {
+        if (!entry.view || entry.view.webContents.isDestroyed()) return;
+        entry.view.setBounds(getContentArea());
+        try { entry.view.webContents.invalidate(); } catch (e) {}
+    }, 60);
 
     currentViewKey = viewKey;
     syncTitle();
@@ -1172,6 +1195,10 @@ function createWindow() {
     // Wait until the sidebar is ready before creating sessions, so the UI can receive events
     sidebarView.webContents.once('did-finish-load', () => {
         layout();
+        // Work around a sidebar-only quirk: the first time it is laid out the internal
+        // viewport lags, leaving a blank strip at the bottom (resizing the window fixes it).
+        // A few spaced-out layout() re-runs have the same effect as dragging the window.
+        kickLayout();
         if (views.size === 0) {
             if (saved) {
                 // Restore last tabs; seqCounter must be restored first to avoid new sessions colliding with old keys
