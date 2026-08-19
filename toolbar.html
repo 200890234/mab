@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<style>
+    :root {
+        --bg: #2b2b2b;
+        --text: #d7d7d7;
+        --hover: #3a3a3a;
+        --active: #4a4a4a;
+        --border: #1f1f1f;
+        --accent: #4a90d9;
+    }
+    html.light {
+        --bg: #ECEFF4;
+        --text: #2a2a2a;
+        --hover: #dde3ea;
+        --active: #cdd6e0;
+        --border: #d0d6dd;
+        --accent: #2f6fb0;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    body {
+        display: flex;
+        align-items: stretch;
+        width: 100%;
+        height: 30px;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+        font-size: 12px;
+        user-select: none;
+        --sbw: 220px;
+    }
+    .tb-left {
+        display: flex;
+        align-items: center;
+        flex: 0 0 var(--sbw);
+        width: var(--sbw);
+        min-width: 0;
+        height: 100%;
+        background: var(--bg);
+        border-right: 1px solid var(--border);
+        position: relative;
+    }
+    .tb-right {
+        display: flex;
+        align-items: center;
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 100%;
+        padding-right: 6px;
+        background: var(--bg);
+        position: relative;
+    }
+    .brand {
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        padding: 0 12px;
+        color: var(--text);
+        white-space: nowrap;
+    }
+    .menus { display: flex; align-items: center; height: 100%; }
+    .menu-btn {
+        height: 100%;
+        padding: 0 10px;
+        display: inline-flex;
+        align-items: center;
+        background: transparent;
+        color: var(--text);
+        border: none;
+        cursor: pointer;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+    .menu-btn:hover { background: var(--hover); }
+    .tools {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex: 1 1 auto;
+        overflow-x: auto;
+        height: 100%;
+        padding: 0 6px;
+        min-width: 0;
+    }
+    .tools::-webkit-scrollbar { height: 0; }
+    .tool-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 10px;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--text);
+        border: none;
+        cursor: pointer;
+        white-space: nowrap;
+        font-size: 12px;
+        line-height: 1;
+    }
+    .tool-btn:hover { background: var(--hover); }
+    .tool-btn.active { background: var(--active); }
+    .tool-btn .x {
+        opacity: 0.5;
+        font-size: 11px;
+        padding-left: 2px;
+    }
+    .tool-btn .x:hover { opacity: 1; color: #ff6b6b; }
+
+    .add-wrap { position: relative; display: inline-block; flex-shrink: 0; }
+    .add-btn {
+        width: 26px; height: 24px;
+        display: inline-flex; align-items: center; justify-content: center;
+        border-radius: 5px;
+        background: transparent; color: var(--text);
+        border: none; cursor: pointer; font-size: 16px; line-height: 1;
+    }
+    .add-btn:hover { background: var(--hover); }
+
+    .add-form {
+        display: none;
+        position: absolute;
+        top: 2px; right: 2px;
+        z-index: 20;
+        align-items: center;
+        gap: 4px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0 4px;
+        width: 300px;
+        height: 26px;
+    }
+    .add-form.show { display: flex; }
+    .add-form input {
+        flex: 1;
+        height: 20px;
+        padding: 0 4px;
+        border-radius: 3px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        font-size: 12px;
+        outline: none;
+    }
+    .add-form .row { display: flex; gap: 4px; flex-shrink: 0; }
+    .add-form button {
+        height: 20px;
+        padding: 0 8px;
+        border-radius: 3px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 11px;
+    }
+    .add-form .ok { background: var(--accent); color: #fff; border-color: var(--accent); }
+</style>
+</head>
+<body>
+    <div class="tb-left">
+        <div class="brand">MAB</div>
+        <div class="menus" id="menus"></div>
+    </div>
+    <div class="tb-right">
+        <div class="tools" id="tools"></div>
+        <div class="add-wrap">
+            <button class="add-btn" id="addBtn" title="添加网页工具">+</button>
+            <div class="add-form" id="addForm">
+                <input id="urlInput" type="text" placeholder="https://example.com" />
+                <div class="row">
+                    <button class="ok" id="okBtn">添加</button>
+                    <button class="cancel" id="cancelBtn">取消</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const toolsEl = document.getElementById('tools');
+    const addBtn = document.getElementById('addBtn');
+    const addForm = document.getElementById('addForm');
+    const urlInput = document.getElementById('urlInput');
+    const okBtn = document.getElementById('okBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+
+    let webTools = [];
+    let activeKey = null;
+
+    function normalizeUrl(u) {
+        u = (u || '').trim();
+        if (!u) return '';
+        if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+        return u;
+    }
+
+    function render() {
+        toolsEl.innerHTML = '';
+        for (const t of webTools) {
+            const btn = document.createElement('button');
+            btn.className = 'tool-btn' + (t.key === activeKey ? ' active' : '');
+            btn.title = t.name + '\n' + t.url;
+            const label = document.createElement('span');
+            label.textContent = t.name;
+            const x = document.createElement('span');
+            x.className = 'x';
+            x.textContent = '×';
+            x.addEventListener('click', (e) => {
+                e.stopPropagation();
+                window.toolbarAPI.closeWebTool(t.key);
+            });
+            btn.appendChild(label);
+            btn.appendChild(x);
+            btn.addEventListener('click', () => window.toolbarAPI.switchWebTool(t.key));
+            toolsEl.appendChild(btn);
+        }
+    }
+
+    // ---- Custom menu buttons (File / View / Help) ----
+    const menusEl = document.getElementById('menus');
+    let menuLabels = { file: 'File', view: 'View', help: 'Help' };
+
+    function renderMenus() {
+        menusEl.innerHTML = '';
+        for (const key of ['file', 'view', 'help']) {
+            const btn = document.createElement('button');
+            btn.className = 'menu-btn';
+            btn.textContent = menuLabels[key] || key;
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const r = btn.getBoundingClientRect();
+                window.toolbarAPI.showMenuPopup(key, Math.round(r.left), Math.round(r.bottom));
+            });
+            menusEl.appendChild(btn);
+        }
+    }
+    renderMenus();
+
+    window.toolbarAPI.onMenuItems((data) => {
+        if (data && data.labels) menuLabels = data.labels;
+        renderMenus();
+    });
+
+    window.toolbarAPI.onWebTools((list) => { webTools = list || []; render(); });
+    window.toolbarAPI.onActiveWebTool((key) => { activeKey = key; render(); });
+    window.toolbarAPI.onThemeChanged((theme) => {
+        document.documentElement.classList.toggle('light', theme === 'light');
+    });
+    window.toolbarAPI.onSidebarWidth((w) => {
+        // Keep the left menu area aligned with the sidebar below, and the right tool area
+        // aligned with the content area below.
+        document.body.style.setProperty('--sbw', (w || 220) + 'px');
+    });
+
+    addBtn.addEventListener('click', () => {
+        addForm.classList.toggle('show');
+        if (addForm.classList.contains('show')) urlInput.focus();
+    });
+    cancelBtn.addEventListener('click', () => { addForm.classList.remove('show'); urlInput.value = ''; });
+    okBtn.addEventListener('click', () => {
+        const url = normalizeUrl(urlInput.value);
+        if (!url) return;
+        let name = url.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+        window.toolbarAPI.addWebTool(url, name);
+        addForm.classList.remove('show');
+        urlInput.value = '';
+    });
+    urlInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') okBtn.click();
+        if (e.key === 'Escape') cancelBtn.click();
+    });
+</script>
+</body>
+</html>

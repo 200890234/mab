@@ -22,6 +22,11 @@ const PROXY_RULES = process.env.AI_BROWSER_PROXY || null;
 
 let mainWindow = null;
 let sidebarView = null;
+let toolbarView = null;
+
+// Height of our custom web-toolbar row (sits just below the native title/menu bar, on its own row).
+const TOOLBAR_H = 30;
+
 
 /** @type {Map<string, {view: WebContentsView, toolKey: string, name: string, partition: string}>} */
 let views = new Map();
@@ -81,6 +86,12 @@ const AI_TOOLS = {
         icon: 'C',
         color: '#D97757',
         needsProxy: true
+    },
+    customWeb: {
+        name: 'Web',
+        url: 'about:blank',
+        icon: '🌐',
+        color: '#888888'
     }
 };
 
@@ -139,6 +150,11 @@ function applyTheme(theme) {
     views.forEach(entry => {
         try { entry.view.setBackgroundColor(bg); } catch (e) {}
     });
+    if (toolbarView && toolbarView.webContents && !toolbarView.webContents.isDestroyed()) {
+        // Keep the toolbar view transparent; the visible row/dropdowns set their own backgrounds via CSS.
+        try { toolbarView.setBackgroundColor('#00000000'); } catch (e) {}
+        toolbarView.webContents.send('theme-changed', theme);
+    }
 }
 
 // Auto-start preference (separate file, to avoid mixing with sessions)
@@ -182,10 +198,15 @@ function loadState() {
                 && typeof s.partition === 'string'
                 && AI_TOOLS[s.toolKey]
         );
-        if (sessions.length === 0) return null;
+        const webTools = Array.isArray(raw.webTools)
+            ? raw.webTools.filter(w => w && typeof w.key === 'string' && typeof w.url === 'string')
+            : [];
+        const allKeys = [...sessions.map(s => s.key), ...webTools.map(w => w.key)];
+        if (allKeys.length === 0) return null;
         return {
             sessions,
-            activeKey: sessions.some(s => s.key === raw.activeKey) ? raw.activeKey : sessions[0].key,
+            webTools,
+            activeKey: allKeys.includes(raw.activeKey) ? raw.activeKey : allKeys[0],
             seqCounter: Number.isInteger(raw.seqCounter) ? raw.seqCounter : 0,
             windowBounds: raw.windowBounds || null,
             sidebarWidth: Number.isInteger(raw.sidebarWidth) ? raw.sidebarWidth : 220
@@ -206,20 +227,24 @@ function saveState() {
         }
     } catch { /* ignore */ }
 
+    const sessions = [];
+    const webTools = [];
+    for (const [key, entry] of views) {
+        if (entry.toolKey === 'customWeb') {
+            webTools.push({ key, name: entry.name, url: getLiveURL(entry) });
+        } else {
+            sessions.push({ key, toolKey: entry.toolKey, name: entry.name, partition: entry.partition, url: getLiveURL(entry) });
+        }
+    }
+
     const data = {
         version: STATE_VERSION,
         seqCounter,
         activeKey: currentViewKey,
         windowBounds,
         sidebarWidth,
-        sessions: [...views].map(([key, entry]) => ({
-            key,
-            toolKey: entry.toolKey,
-            name: entry.name,
-            partition: entry.partition,
-            // Record the actual current URL so restart returns to the same conversation
-            url: getLiveURL(entry)
-        }))
+        sessions,
+        webTools
     };
 
     try {
@@ -247,6 +272,17 @@ function getLiveURL(entry) {
     }
 }
 
+// Extract a human-friendly host (without "www.") from a URL, used as the initial
+// name for a newly opened web-tool tab before its real page title is known.
+function hostFromUrl(url) {
+    try {
+        const u = new URL(url);
+        return u.hostname.replace(/^www\./, '');
+    } catch {
+        return null;
+    }
+}
+
 // Debounced save, to avoid repeated disk writes during frequent navigation
 let saveTimer = null;
 function scheduleSave() {
@@ -262,11 +298,13 @@ function getContentArea() {
     if (!mainWindow) return { x: 0, y: 0, width: 0, height: 0 };
     // Use contentBounds instead of getSize(); the latter includes window borders and would cause content overflow
     const { width, height } = mainWindow.getContentBounds();
+    // Our custom toolbar row sits directly below the native title/menu bar (contentView y=0).
+    // Content (sidebar + sessions) starts below the toolbar row.
     return {
         x: sidebarWidth,
-        y: 0,
+        y: TOOLBAR_H,
         width: Math.max(0, width - sidebarWidth),
-        height: Math.max(0, height)
+        height: Math.max(0, height - TOOLBAR_H)
     };
 }
 
@@ -274,7 +312,8 @@ function layout() {
     if (!mainWindow) return;
     const { width, height } = mainWindow.getContentBounds();
     if (sidebarView) {
-        sidebarView.setBounds({ x: 0, y: 0, width: sidebarWidth, height });
+        // Sidebar starts below our custom toolbar row (contentView y=0 is already below the native menu bar).
+        sidebarView.setBounds({ x: 0, y: TOOLBAR_H, width: sidebarWidth, height: Math.max(0, height - TOOLBAR_H) });
     }
     const area = getContentArea();
     // Refresh bounds for every mounted view so none keeps a stale/zero rect that would
@@ -284,6 +323,16 @@ function layout() {
     }
     const entry = currentViewKey ? views.get(currentViewKey) : null;
     if (entry) entry.view.setBounds(area);
+    // Our custom web-toolbar row spans the full content width at contentView y=0.
+    if (toolbarView && mainWindow.contentView) {
+        mainWindow.contentView.addChildView(toolbarView);
+        toolbarView.setBounds({ x: 0, y: 0, width, height: TOOLBAR_H });
+        // Keep the left placeholder aligned with the sidebar width so the web-tool buttons
+        // start exactly where the content area begins (width - sidebarWidth on the right).
+        if (!toolbarView.webContents.isDestroyed()) {
+            toolbarView.webContents.send('set-sidebar-width', sidebarWidth);
+        }
+    }
 }
 
 function buildErrorPage(message) {
@@ -372,9 +421,13 @@ function createView(tool, partitionName, initialURL) {
         wc.loadURL(buildErrorPage(`${errorDescription} (${errorCode})`));
     });
 
-    // Open external links in the system browser, so popups don't replace the session
+    // Open links meant for a new window (e.g. target="_blank") as a new in-app web-tool tab
+    // in the top toolbar, instead of replacing the current session or jumping to the system browser.
     wc.setWindowOpenHandler(({ url }) => {
-        if (/^https?:/.test(url)) shell.openExternal(url);
+        if (/^https?:/.test(url)) {
+            addWebTool(url, null, { activate: true, notify: true });
+            return { action: 'deny' };
+        }
         return { action: 'deny' };
     });
 
@@ -430,6 +483,15 @@ function switchView(viewKey) {
     currentViewKey = viewKey;
     syncTitle();
     notifyRenderer('view-switched', viewKey);
+    syncToolbar();
+    syncMenu();
+
+    // Keep the custom toolbar row above any content view so it stays visible/clickable
+    if (toolbarView && mainWindow.contentView) {
+        try { mainWindow.contentView.addChildView(toolbarView); } catch (e) {}
+        const w = mainWindow.getContentBounds().width;
+        toolbarView.setBounds({ x: 0, y: 0, width: w, height: TOOLBAR_H });
+    }
     return true;
 }
 
@@ -445,6 +507,27 @@ function getActiveWebContents() {
     const entry = views.get(currentViewKey);
     if (!entry || entry.view.webContents.isDestroyed()) return null;
     return entry.view.webContents;
+}
+
+// About dialog (previously a native menu item; now triggered from the custom title bar)
+function showAboutDialog() {
+    const isZh = appConfig.lang === 'zh';
+    const version = app.getVersion();
+    const ico = (() => {
+        const png = path.join(__dirname, 'assets', 'icon.png');
+        return fs.existsSync(png) ? png : undefined;
+    })();
+    dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: isZh ? '关于 MAB' : 'About MAB',
+        message: isZh ? 'Mervyn 的 AI 浏览器' : "Mervyn's AI Browser",
+        detail: isZh
+            ? `版本 ${version}\n\n基于 Electron 构建的多会话 AI 浏览器，可并排打开 Gemini、DeepSeek、ChatGPT、豆包、千问、智谱清言、Claude 等，每个会话相互独立并保留登录态。\n\n© 2026 Mervyn`
+            : `Version ${version}\n\nA multi-session AI browser built with Electron. Open Gemini, DeepSeek, ChatGPT, Doubao, Qwen, Zhipu AI, and Claude side by side in isolated, persistent sessions.\n\n© 2026 Mervyn`,
+        buttons: [isZh ? '确定' : 'OK'],
+        icon: ico,
+        noLink: true
+    });
 }
 
 // Update check state
@@ -477,7 +560,6 @@ function checkForUpdate() {
         if (newer !== updateAvailable || tag !== latestVersion) {
             updateAvailable = newer;
             latestVersion = tag;
-            buildAppMenu();
             pushUpdateInfo();
         }
     }).catch(err => console.error('[update] check failed:', err));
@@ -501,7 +583,6 @@ function checkForUpdateAndNotify() {
         if (newer !== updateAvailable || tag !== latestVersion) {
             updateAvailable = newer;
             latestVersion = tag;
-            buildAppMenu();
             pushUpdateInfo();
         }
         if (newer) {
@@ -536,147 +617,125 @@ function checkForUpdateAndNotify() {
     });
 }
 
-// Push update availability to the sidebar so it can render an HTML badge
+// Push update availability to the sidebar (HTML badge) and the custom title bar
 function pushUpdateInfo() {
     if (sidebarView && !sidebarView.webContents.isDestroyed()) {
         sidebarView.webContents.send('update-info', { available: updateAvailable, version: latestVersion });
     }
 }
 
-// Top application menu text (switches with language)
-const MENU_I18N = {
-    en: {
-        update: (v) => `Update v${v} ⬇`,
-        checkForUpdates: 'Check for Updates',
-        file: 'File',
-        newSession: 'New Session',
-        quit: 'Quit',
-        view: 'View',
-        back: 'Back',
-        forward: 'Forward',
-        reload: 'Reload',
-        forceReload: 'Force Reload',
-        resetZoom: 'Reset Zoom',
-        zoomIn: 'Zoom In',
-        zoomOut: 'Zoom Out',
-        help: 'Help',
-        openDevTools: 'Open DevTools',
-        about: 'About'
-    },
-    zh: {
-        update: (v) => `更新 v${v} ⬇`,
-        checkForUpdates: '检查更新',
-        file: '文件',
-        newSession: '新建会话',
-        quit: '退出',
-        view: '视图',
-        back: '后退',
-        forward: '前进',
-        reload: '重新加载',
-        forceReload: '强制重新加载',
-        resetZoom: '重置缩放',
-        zoomIn: '放大',
-        zoomOut: '缩小',
-        help: '帮助',
-        openDevTools: '打开开发者工具',
-        about: '关于'
-    }
-};
-function menuT() {
-    return MENU_I18N[appConfig.lang === 'zh' ? 'zh' : 'en'];
+// ---- Custom menu items exposed to the web toolbar (Plan 2: native menu removed) ----
+// The toolbar.html renders File / View / Help as HTML dropdowns on the same row.
+// These action handlers are invoked via IPC from toolbar-preload.js.
+function getMenuItems() {
+    const isZh = appConfig.lang === 'zh';
+    const t = (en, zh) => (isZh ? zh : en);
+    const wc = getActiveWebContents();
+
+    const fileItems = [
+        {
+            label: t('New Session', '新建会话'),
+            // submenu: each AI tool -> addSession(key)
+            submenu: Object.entries(AI_TOOLS)
+                .filter(([key]) => key !== 'customWeb')
+                .map(([key, tool]) => ({
+                    label: `${tool.icon || ''} ${tool.name}`.trim(),
+                    action: 'new-session',
+                    arg: key
+                }))
+        },
+        { separator: true },
+        {
+            label: t('Close Current Tab', '关闭当前标签页'),
+            action: 'close-current',
+            disabled: !currentViewKey
+        },
+        { separator: true },
+        { label: t('Quit', '退出'), action: 'quit' }
+    ];
+
+    const viewItems = [
+        { label: t('Back', '后退'), action: 'back', disabled: !wc || !wc.canGoBack() },
+        { label: t('Forward', '前进'), action: 'forward', disabled: !wc || !wc.canGoForward() },
+        { label: t('Reload', '重新加载'), action: 'reload' },
+        { label: t('Force Reload', '强制重新加载'), action: 'force-reload' },
+        { separator: true },
+        { label: t('Reset Zoom', '重置缩放'), action: 'reset-zoom' },
+        { label: t('Zoom In', '放大'), action: 'zoom-in' },
+        { label: t('Zoom Out', '缩小'), action: 'zoom-out' },
+        { separator: true },
+        { label: t('Open DevTools', '打开开发者工具'), action: 'devtools' }
+    ];
+
+    const helpItems = [
+        { label: t('Check for Updates', '检查更新'), action: 'check-update' },
+        { label: t('About', '关于'), action: 'about' }
+    ];
+
+    return {
+        labels: { file: t('File','文件'), view: t('View','视图'), help: t('Help','帮助') },
+        file: fileItems,
+        view: viewItems,
+        help: helpItems
+    };
 }
 
-// Top application menu
-function buildAppMenu() {
-    const m = menuT();
-    const template = [];
-
-    template.push({
-        label: m.file,
-        submenu: [
-            {
-                label: m.newSession,
-                submenu: Object.entries(AI_TOOLS).map(([key, tool]) => ({
-                    label: `${tool.icon} ${tool.name}`,
-                    click: () => addSession(key)
-                }))
-            },
-            { type: 'separator' },
-            { role: 'quit', label: m.quit }
-        ]
-    });
-
-    template.push({
-        label: m.view,
-        submenu: [
-            {
-                label: m.back,
-                accelerator: 'CmdOrCtrl+Left',
-                click: () => { const wc = getActiveWebContents(); if (wc && wc.canGoBack()) wc.goBack(); }
-            },
-            {
-                label: m.forward,
-                accelerator: 'CmdOrCtrl+Right',
-                click: () => { const wc = getActiveWebContents(); if (wc && wc.canGoForward()) wc.goForward(); }
-            },
-            {
-                label: m.reload,
-                accelerator: 'F5',
-                click: () => { const wc = getActiveWebContents(); if (wc) wc.reload(); }
-            },
-            {
-                label: m.forceReload,
-                accelerator: 'Ctrl+F5',
-                click: () => { const wc = getActiveWebContents(); if (wc) wc.reloadIgnoringCache(); }
-            },
-            { type: 'separator' },
-            { role: 'resetZoom', label: m.resetZoom, accelerator: 'CommandOrControl+0' },
-            { role: 'zoomIn', label: m.zoomIn, accelerator: 'CommandOrControl+=' },
-            { role: 'zoomOut', label: m.zoomOut, accelerator: 'CommandOrControl+-' }
-        ]
-    });
-
-    template.push({
-        label: m.help,
-        submenu: [
-            {
-                label: m.openDevTools,
-                accelerator: 'F12',
-                click: () => { const wc = getActiveWebContents(); if (wc) wc.toggleDevTools(); }
-            },
-            {
-                label: m.about,
-                click: () => {
-                    const isZh = appConfig.lang === 'zh';
-                    const version = app.getVersion();
-                    const ico = (() => {
-                        const png = path.join(__dirname, 'assets', 'icon.png');
-                        return fs.existsSync(png) ? png : undefined;
-                    })();
-                    dialog.showMessageBox(mainWindow, {
-                        type: 'info',
-                        title: isZh ? '关于 MAB' : 'About MAB',
-                        message: isZh ? 'Mervyn 的 AI 浏览器' : "Mervyn's AI Browser",
-                        detail: isZh
-                            ? `版本 ${version}\n\n基于 Electron 构建的多会话 AI 浏览器，可并排打开 Gemini、DeepSeek、ChatGPT、豆包、千问、智谱清言、Claude 等，每个会话相互独立并保留登录态。\n\n© 2026 Mervyn`
-                            : `Version ${version}\n\nA multi-session AI browser built with Electron. Open Gemini, DeepSeek, ChatGPT, Doubao, Qwen, Zhipu AI, and Claude side by side in isolated, persistent sessions.\n\n© 2026 Mervyn`,
-                        buttons: [isZh ? '确定' : 'OK'],
-                        icon: ico,
-                        noLink: true
-                    });
-                }
-            },
-            { type: 'separator' },
-            {
-                // "Check for Updates": probe GitHub, then show a dialog with the result
-                // (available version, release notes, and an option to open the download page)
-                label: updateAvailable ? m.update(latestVersion) : m.checkForUpdates,
-                click: () => checkForUpdateAndNotify()
+// Execute a menu action requested from the web toolbar.
+function runMenuAction(action, arg) {
+    const wc = getActiveWebContents();
+    switch (action) {
+        case 'new-session': if (arg) addSession(arg); break;
+        case 'close-current': {
+            const entry = currentViewKey && views.get(currentViewKey);
+            if (entry) {
+                if (entry.toolKey === 'customWeb') closeWebTool(currentViewKey);
+                else closeSession(currentViewKey);
             }
-        ]
-    });
+            break;
+        }
+        case 'quit': app.quit(); break;
+        case 'back': if (wc && wc.canGoBack()) wc.goBack(); break;
+        case 'forward': if (wc && wc.canGoForward()) wc.goForward(); break;
+        case 'reload': if (wc) wc.reload(); break;
+        case 'force-reload': if (wc) wc.reloadIgnoringCache(); break;
+        case 'reset-zoom': if (wc) wc.setZoomLevel(0); break;
+        case 'zoom-in': if (wc) wc.setZoomLevel(wc.getZoomLevel() + 1); break;
+        case 'zoom-out': if (wc) wc.setZoomLevel(wc.getZoomLevel() - 1); break;
+        case 'devtools': if (wc) wc.toggleDevTools(); break;
+        case 'check-update': checkForUpdateAndNotify(); break;
+        case 'about': showAboutDialog(); break;
+    }
+}
 
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+// Push the current menu items to the web toolbar (called on startup, language change, and
+// whenever the active web-contents changes so enabled/disabled states stay correct).
+function syncMenu() {
+    if (toolbarView && !toolbarView.webContents.isDestroyed()) {
+        toolbarView.webContents.send('menu-items', getMenuItems());
+    }
+}
+
+// Convert our custom menu item tree to an Electron Menu template for native popup menus.
+function itemsToMenuTemplate(items) {
+    return items.map(it => {
+        if (it.separator) return { type: 'separator' };
+        if (it.submenu) {
+            return { label: it.label, submenu: itemsToMenuTemplate(it.submenu) };
+        }
+        return {
+            label: it.label,
+            enabled: !it.disabled,
+            click: () => {
+                runMenuAction(it.action, it.arg);
+                syncMenu();
+            }
+        };
+    });
+}
+
+function buildPopupMenu(type) {
+    const items = (getMenuItems()[type] || []);
+    return Menu.buildFromTemplate(itemsToMenuTemplate(items));
 }
 
 // Right-click context menu (bound to a specific WebContentsView)
@@ -725,9 +784,9 @@ function serializeView(key, entry) {
         key,
         toolKey: entry.toolKey,
         name: entry.name,
-        icon: tool.icon,
-        logo: tool.logo || null,
-        color: tool.color
+        icon: tool ? tool.icon : '🌐',
+        logo: tool ? (tool.logo || null) : null,
+        color: tool ? tool.color : '#888888'
     };
 }
 
@@ -882,6 +941,89 @@ function closeSession(viewKey) {
     scheduleSave();
 }
 
+// ---------------- Custom web toolbar ----------------
+// Adds an arbitrary web page as a top-toolbar tab. These tabs live in the same `views` map as AI
+// sessions, so switching keeps them mounted and state is preserved; closing destroys the renderer.
+function addWebTool(url, title, { restore = null, activate = true, notify = true } = {}) {
+    if (!mainWindow) return null;
+
+    const viewKey = restore ? restore.key : `webtool-${++seqCounter}`;
+    const partitionName = `webtool_${viewKey}`;
+    // Use the supplied title when available; otherwise fall back to the host name (more
+    // recognizable than a generic "Web"), and let the real page title take over once loaded.
+    let name = restore ? restore.name : (title || hostFromUrl(url) || 'Web');
+    const tool = AI_TOOLS.customWeb;
+
+    const view = createView(tool, partitionName, url || restore?.url || tool.url);
+    const entry = {
+        view,
+        toolKey: 'customWeb',
+        name,
+        partition: partitionName
+    };
+    views.set(viewKey, entry);
+
+    // For freshly opened web tools (not restored), adopt the page's real title as the tab name
+    // once it loads, so the toolbar label reads e.g. "百度一下" instead of the raw host.
+    if (!restore) {
+        let titleAdopted = false;
+        view.webContents.on('page-title-updated', (_e, pageTitle) => {
+            if (titleAdopted) return;
+            const trimmed = String(pageTitle || '').trim();
+            if (!trimmed) return;
+            titleAdopted = true;
+            entry.name = trimmed;
+            notifyRenderer('view-renamed', { key: viewKey, name: trimmed });
+            if (viewKey === currentViewKey) syncTitle();
+            syncToolbar();
+        });
+    }
+
+    mainWindow.contentView.addChildView(view);
+    view.setBounds(getContentArea());
+    view.setVisible(false);
+
+    syncToolbar();
+    if (activate) switchView(viewKey);
+    if (notify) scheduleSave();
+    return viewKey;
+}
+
+function closeWebTool(viewKey) {
+    const entry = views.get(viewKey);
+    if (!entry || entry.toolKey !== 'customWeb') return;
+
+    destroyView(entry);
+    views.delete(viewKey);
+
+    if (currentViewKey === viewKey) {
+        currentViewKey = null;
+        const nextKey = views.keys().next().value;
+        if (nextKey) switchView(nextKey);
+    }
+    syncToolbar();
+    notifyRenderer('view-closed', viewKey);
+    scheduleSave();
+}
+
+function notifyToolbar(channel, ...args) {
+    if (toolbarView && !toolbarView.webContents.isDestroyed()) {
+        toolbarView.webContents.send(channel, ...args);
+    }
+}
+
+function syncToolbar() {
+    if (!toolbarView || toolbarView.webContents.isDestroyed()) return;
+    const list = [];
+    for (const [key, entry] of views) {
+        if (entry.toolKey === 'customWeb') {
+            list.push({ key, name: entry.name });
+        }
+    }
+    notifyToolbar('webtools-sync', list);
+    notifyToolbar('webtool-active', currentViewKey);
+}
+
 function clearPartitionData(partitionName) {
     try {
         const ses = session.fromPartition(`persist:${partitionName}`);
@@ -929,8 +1071,9 @@ function createWindow() {
         ...(bounds && Number.isInteger(bounds.x) ? { x: bounds.x, y: bounds.y } : {}),
         minWidth: 800,
         minHeight: 600,
+        // Native title bar is kept (its own row). Our custom web-toolbar lives in a row just below it.
         title: `MAB - ${APP_FULL_NAME}`,
-        backgroundColor: '#1e1e1e',   // same as v1.0.0: opaque background to avoid the system separator line at the bottom of the menu bar
+        backgroundColor: '#1e1e1e',
         icon: (() => {
             const ico = path.join(__dirname, 'assets', 'icon.ico');
             const png = path.join(__dirname, 'assets', 'icon.png');
@@ -945,9 +1088,11 @@ function createWindow() {
     // Apply saved auto-start preference
     try { setAutoStart(getAutoStart()); } catch (e) { console.error('[autostart] apply preference failed:', e); }
 
-    // Build the top menu (back/forward/reload/zoom etc.)
-    buildAppMenu();
-    // Check for updates after launch (shows a hint in the top-level menu when an update is available)
+    // Plan 2: native menu removed. The web toolbar (toolbar.html) renders File / View / Help
+    // as HTML dropdowns on the same row as the web-tool buttons. Push the menu items there.
+    Menu.setApplicationMenu(null);
+    syncMenu();
+    // Check for updates after launch (shows a hint in the sidebar when an update is available)
     checkForUpdate();
 
     // Sidebar as a WebContentsView
@@ -963,6 +1108,32 @@ function createWindow() {
     // Auto-recover the sidebar if its renderer crashes, otherwise the whole UI goes blank
     sidebarView.webContents.on('crashed', () => { if (!sidebarView.webContents.isDestroyed()) sidebarView.webContents.reload(); });
     sidebarView.webContents.on('render-process-gone', () => { if (!sidebarView.webContents.isDestroyed()) sidebarView.webContents.reload(); });
+
+    // Top toolbar for arbitrary web pages (its own row, just below the native title bar)
+    toolbarView = new WebContentsView({
+        webPreferences: {
+            preload: path.join(__dirname, 'toolbar-preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            transparent: true
+        }
+    });
+    toolbarView.webContents.loadFile(path.join(__dirname, 'toolbar.html'));
+    toolbarView.webContents.on('crashed', () => { if (!toolbarView.webContents.isDestroyed()) toolbarView.webContents.reload(); });
+    toolbarView.webContents.on('render-process-gone', () => { if (!toolbarView.webContents.isDestroyed()) toolbarView.webContents.reload(); });
+    // Make the toolbar view transparent; only the visible 30px row and opened dropdowns draw backgrounds.
+    toolbarView.setBackgroundColor('#00000000');
+    // Ensure the toolbar is a child view from the start (layout() re-adds it on top as needed)
+    try { mainWindow.contentView.addChildView(toolbarView); } catch (e) { console.error('[toolbar] addChildView failed:', e); }
+    // Give it an initial position/size at the top of the content area (below the native menu bar).
+    toolbarView.setBounds({ x: 0, y: 0, width: mainWindow.getContentBounds().width, height: TOOLBAR_H });
+    // Sync toolbar once it is ready; messages sent before this are lost.
+    toolbarView.webContents.once('did-finish-load', () => {
+        try { toolbarView.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+        syncToolbar();
+        syncMenu();
+        try { toolbarView.webContents.send('set-sidebar-width', sidebarWidth); } catch (e) {}
+    });
 
     // Ctrl+wheel zoom: zoom-preload.js listens inside the renderer and notifies the main process via
     // this channel. e.sender is the content view's webContents that initiated the wheel; setZoomLevel on it.
@@ -993,6 +1164,7 @@ function createWindow() {
     mainWindow.on('closed', () => {
         mainWindow = null;
         sidebarView = null;
+        toolbarView = null;
         views.clear();
         currentViewKey = null;
     });
@@ -1006,6 +1178,10 @@ function createWindow() {
                 seqCounter = saved.seqCounter;
                 for (const s of saved.sessions) {
                     addSession(s.toolKey, { notify: false, activate: false, restore: s });
+                }
+                // Restore arbitrary web tools stored in the top toolbar
+                for (const w of saved.webTools) {
+                    addWebTool(w.url, w.name, { notify: false, activate: false, restore: w });
                 }
                 // Fallback: if all restores fail, fall back to default sessions
                 if (views.size === 0) {
@@ -1021,14 +1197,18 @@ function createWindow() {
                 if (firstKey) switchView(firstKey);
             }
         }
-        // Push the full state to the renderer in one shot
+        // Push the full state to the renderer in one shot (custom web tools live only in the top toolbar)
         notifyRenderer('state-sync', {
             tools: Object.fromEntries(
                 Object.entries(AI_TOOLS).map(([k, t]) => [k, { name: t.name, icon: t.icon, color: t.color, logo: t.logo || null }])
             ),
-            views: [...views].map(([key, entry]) => serializeView(key, entry)),
+            views: [...views]
+                .filter(([key, entry]) => entry.toolKey !== 'customWeb')
+                .map(([key, entry]) => serializeView(key, entry)),
             activeKey: currentViewKey
         });
+        // Keep the top toolbar in sync with the restored web tools
+        syncToolbar();
         // Push update availability so the sidebar can show its HTML badge
         pushUpdateInfo();
     });
@@ -1051,10 +1231,14 @@ ipcMain.on('create-new-view', (_event, toolKey) => addSession(toolKey));
 ipcMain.on('close-view', (_event, viewKey) => closeSession(viewKey));
 ipcMain.on('rename-view', (_event, viewKey, newName) => renameSession(viewKey, newName));
 ipcMain.on('reorder-view', (_event, fromKey, toKey, after) => reorderView(fromKey, toKey, !!after));
+// Top toolbar: arbitrary web pages
+ipcMain.on('add-webtool', (_event, url, name) => { addWebTool(url, name); });
+ipcMain.on('switch-webtool', (_event, viewKey) => switchView(viewKey));
+ipcMain.on('close-webtool', (_event, viewKey) => closeWebTool(viewKey));
 ipcMain.on('sidebar-resize', (_event, width) => {
     const w = Math.round(Number(width) || sidebarWidth);
     sidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w));
-    layout();
+    layout(); // layout() already pushes set-sidebar-width to the toolbar
     scheduleSave();
 });
 ipcMain.on('get-autostart', (event) => {
@@ -1063,6 +1247,12 @@ ipcMain.on('get-autostart', (event) => {
 ipcMain.on('set-autostart', (_event, enabled) => {
     setAutoStart(enabled);
 });
+// Show a native popup menu at the requested position (used by the self-drawn File/View/Help buttons).
+ipcMain.on('show-menu-popup', (_event, type, x, y) => {
+    if (!mainWindow) return;
+    const menu = buildPopupMenu(type);
+    menu.popup({ window: mainWindow, x, y });
+});
 // Language / theme config
 ipcMain.handle('get-config', () => loadConfig());
 ipcMain.handle('set-config', async (_event, patch) => {
@@ -1070,7 +1260,7 @@ ipcMain.handle('set-config', async (_event, patch) => {
     const langChanged = patch && appConfig.lang !== cfg.lang;
     appConfig = cfg;
     if (patch && patch.theme) applyTheme(cfg.theme);
-    if (langChanged) buildAppMenu(); // rebuild the top menu when language changes
+    if (langChanged) syncMenu(); // rebuild the custom toolbar menu when language changes
     return cfg;
 });
 ipcMain.on('reload-view', (_event, viewKey) => {
