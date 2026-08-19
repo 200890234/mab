@@ -1,27 +1,27 @@
 # Changelog
 
 ## v1.3.1
-- 修复启动后左侧边栏与右侧内容区底部出现空白的问题（布局重排同步视口）。
-- 隐藏左侧会话列表的垂直滚动条（保留滚动功能）。
+- Fixed a blank strip at the bottom of the sidebar and the content area on startup (re-run layout to resync the viewport).
+- Hidden the vertical scrollbar on the left session list while keeping scrolling functional.
 
 ## v1.3.0
-- 重绘菜单栏，移除原生菜单：取消系统原生菜单栏，在原生标题栏下方的工具栏同一行自绘 `MAB | File | View | Help` 菜单按钮，点击以原生弹出菜单呈现，不再遮挡页面内容。
-- 新增网页工具栏：菜单右侧新增自定义网页工具栏，可点击 `+` 添加任意网址，在应用内以独立标签访问，标签随侧边栏拖动实时对齐内容区。
+- Redesigned the menu bar and removed the native menu: the system native menu bar is gone, and a self-drawn `MAB | File | View | Help` menu is rendered on the same row as the toolbar just below the native title bar, opening as a native popup menu without covering page content.
+- Added a web toolbar: a custom web toolbar now sits to the right of the menu, where you can click `+` to open any URL as an in-app tab; tabs align to the content area in real time as the sidebar is resized.
 
 ## v1.2.4
-- 代理逻辑改为默认跟随系统代理（`mode: 'system'`），放开原先仅部分站点走代理的限制。
-- 现在 Clash 的系统代理 / TUN 模式会自动接管所有标签页流量，规则模式下的域名分流对所有站点生效。
-- 仍可通过环境变量 `AI_BROWSER_PROXY` 指定显式代理规则以覆盖系统设置。
-- 发布流程改为自动生成 release notes（`generate_release_notes: true`）。
+- Proxy logic now defaults to following the system proxy (`mode: 'system'`), removing the previous restriction that only some sites used the proxy.
+- Clash's system-proxy / TUN mode now automatically takes over traffic for all tabs, and rule-based domain routing applies to every site.
+- You can still override the system setting by specifying explicit proxy rules via the `AI_BROWSER_PROXY` environment variable.
+- Release notes are now auto-generated (`generate_release_notes: true`).
 
 ## v1.2.3
-- 修复程序运行一段时间后主题内容空白（仅剩标题栏和菜单栏）的问题：
-  - 增加渲染进程崩溃 / 消失后的自动重载恢复（视图与侧边栏）。
-  - 窗口 restore / show / minimize 时刷新布局，修正隐藏再显示后视图边界未更新的问题。
+- Fixed an issue where the theme content went blank after running for a while (only the title bar and menu bar remained):
+  - Added automatic reload recovery after renderer crashes / process loss (for both views and the sidebar).
+  - Refresh layout on window restore / show / minimize to fix stale view bounds after hide-and-show.
 
 ## v1.2.2
-- 修复更新提醒红点始终显示的问题：根因为 CSS `.update-badge { display:inline-flex }` 覆盖了 HTML `hidden` 属性，新增 `.update-badge[hidden] { display:none !important }`。
-- 帮助菜单的「检查更新」改为先检测再弹窗（显示最新版本、更新内容，仅在确有新版本时提供打开下载页按钮）。
+- Fixed an issue where the update-reminder badge always showed: root cause was CSS `.update-badge { display:inline-flex }` overriding the HTML `hidden` attribute; added `.update-badge[hidden] { display:none !important }`.
+- The Help menu's "Check for Updates" now checks first and then shows a dialog (displaying the latest version and release notes, with an "Open Download" button only when a newer version truly exists).
 
 ## v1.2.1
-- 移除调试用的模拟更新提醒。
+- Removed the debug-only simulated update reminder.
