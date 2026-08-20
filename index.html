@@ -543,9 +543,12 @@
             });
         }
 
-        function loadConfigAndApply() {
+        async function loadConfigAndApply() {
             let cfg = { lang: 'en', theme: 'dark' };
-            try { cfg = window.electronAPI.getConfig() || cfg; } catch (e) {}
+            try {
+                const loaded = await window.electronAPI.getConfig();
+                if (loaded && typeof loaded === 'object') cfg = loaded;
+            } catch (e) {}
             appLang = cfg.lang === 'zh' ? 'zh' : 'en';
             applyTheme(cfg.theme);
             applyLang();
