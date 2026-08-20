@@ -11,3 +11,4 @@ window.addEventListener('wheel', (e) => {
     const delta = e.deltaY < 0 ? 1 : -1; // scroll up = zoom in, scroll down = zoom out
     ipcRenderer.send('zoom-wheel', delta);
 }, { passive: false });
+

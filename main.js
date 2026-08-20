@@ -1,7 +1,15 @@
-const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme, clipboard } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme, clipboard, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+
+// Quiet by default: raise Chromium's log level so noisy network-layer errors
+// (e.g. proxy SSL "handshake failed; net_error -100") don't flood the terminal.
+// Our own console.error/warn (JS layer) are unaffected and still print.
+// To restore full Chromium logs for debugging, run:  set MAB_DEBUG=1 ; npm start
+if (!process.env.MAB_DEBUG) {
+  try { app.commandLine.appendSwitch('log-level', '3'); } catch (e) {}
+}
 
 // Fixed userData directory, to avoid Electron deriving the path from package.json name/productName.
 // Previously name drift (my_ai_browser / Mervyn's AI Browser) caused sessions.json and login state to be lost on restart.
@@ -154,6 +162,10 @@ function applyTheme(theme) {
         // Keep the toolbar view transparent; the visible row/dropdowns set their own backgrounds via CSS.
         try { toolbarView.setBackgroundColor('#00000000'); } catch (e) {}
         toolbarView.webContents.send('theme-changed', theme);
+    }
+    // Keep the floating find bar in sync with the app theme
+    if (findWin && !findWin.isDestroyed()) {
+        try { findWin.webContents.send('theme-changed', theme); } catch (e) {}
     }
 }
 
@@ -338,6 +350,9 @@ function layout() {
     if (sidebarView && !sidebarView.webContents.isDestroyed()) {
         try { sidebarView.webContents.invalidate(); } catch (e) {}
     }
+
+    // Keep the find bar glued to the top-right of the content area
+    if (findWin && !findWin.isDestroyed()) positionFindBar();
 }
 
 // On first launch the sidebar's internal viewport can lag behind its bounds, leaving a
@@ -479,6 +494,256 @@ function syncTitle() {
     mainWindow.setTitle(`MAB - ${tabName} - ${APP_FULL_NAME}`);
 }
 
+// ---------------- In-page search (Ctrl+F) ----------------
+// A small borderless BrowserWindow floats above the content area, hosting the
+// find bar UI. It talks to the main process via IPC. The actual search is run
+// by injecting the implementation below into the page's main world via
+// executeJavaScript (Electron's findInPage does not fire `found-in-page` on
+// WebContentsView + BaseWindow, and preload runs in an isolated context so we
+// cannot rely on window.__mabFind being visible to the page).
+//
+// MAB_FIND_IMPL: an IIFE returning a (text, forward) => {matches, activeMatchOrdinal}
+// function. Uses window.find() for highlight + navigation and a text-node scan
+// for the total match count.
+// MAB_FIND_IMPL: an IIFE (text, index) => {matches, activeMatchOrdinal}.
+// Highlights the (index+1)-th text occurrence with a span and scrolls it into
+// view (so navigation moves across the viewport), and returns the total count.
+// State lives in the main process; the page only knows the target index.
+const MAB_FIND_IMPL = `
+(function (text, index) {
+  try {
+    var prev = document.getElementById('__mab_hl');
+    if (prev && prev.parentNode) {
+      var t0 = document.createTextNode(prev.textContent);
+      prev.parentNode.replaceChild(t0, prev);
+      prev.parentNode.normalize();
+    }
+  } catch (e) {}
+  if (!text) return { matches: 0, activeMatchOrdinal: 0 };
+  var lower = text.toLowerCase();
+  var root = document.body || document.documentElement;
+  var ranges = [];
+  var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  var n;
+  while ((n = walker.nextNode())) {
+    var p = n.parentNode;
+    if (!p || p.tagName === 'SCRIPT' || p.tagName === 'STYLE' || p.tagName === 'NOSCRIPT') continue;
+    var nodeText = n.nodeValue;
+    if (!nodeText) continue;
+    var tl = nodeText.toLowerCase();
+    var idx = tl.indexOf(lower);
+    while (idx !== -1) {
+      try {
+        var r = document.createRange();
+        r.setStart(n, idx);
+        r.setEnd(n, idx + text.length);
+        ranges.push(r);
+      } catch (e2) {}
+      idx = tl.indexOf(lower, idx + lower.length);
+    }
+  }
+  var matches = ranges.length;
+  if (matches === 0) return { matches: 0, activeMatchOrdinal: 0 };
+  var i = ((index % matches) + matches) % matches;
+  var r2 = ranges[i];
+  var span = null;
+  try {
+    span = document.createElement('span');
+    span.id = '__mab_hl';
+    span.style.backgroundColor = '#ffeb3b';
+    span.style.color = '#000';
+    r2.surroundContents(span);
+  } catch (e) { span = null; }
+  var target = span || (r2.startContainer && r2.startContainer.parentElement);
+  if (target && target.scrollIntoView) {
+    try { target.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
+  }
+  return { matches: matches, activeMatchOrdinal: i + 1 };
+})
+`;
+
+// MAB_CLEAR_IMPL: restores any highlighted text in the page.
+const MAB_CLEAR_IMPL = `
+try {
+  var prev = document.getElementById('__mab_hl');
+  if (prev && prev.parentNode) {
+    var t0 = document.createTextNode(prev.textContent);
+    prev.parentNode.replaceChild(t0, prev);
+    prev.parentNode.normalize();
+  }
+} catch (e) {}
+`;
+
+let findWin = null;            // the floating find bar window
+let findActiveWebContents = null;
+let lastFindQuery = '';
+let findBarVisible = false;
+let findState = { text: '', index: 0, matches: 0 };
+const FINDBAR_W = 340;
+const FINDBAR_H = 40;
+
+function positionFindBar() {
+    if (!findWin || !mainWindow) return;
+    const b = mainWindow.getContentBounds();
+    // place it at the top-right, just below the toolbar (custom menu bar)
+    const x = b.x + b.width - FINDBAR_W - 8;
+    const y = b.y + TOOLBAR_H + 8;
+    findWin.setBounds({ x, y, width: FINDBAR_W, height: FINDBAR_H });
+    // Keep it above the main window's own content, but NOT above other apps'
+    // windows. 'screen' would pin it on top of every application.
+    findWin.setAlwaysOnTop(true);
+}
+
+function showFindBar() {
+    if (!mainWindow) return;
+    findBarVisible = true;
+    findActiveWebContents = currentViewKey ? views.get(currentViewKey)?.view?.webContents : null;
+    if (!findWin) {
+        const { BrowserWindow } = require('electron');
+        findWin = new BrowserWindow({
+            width: FINDBAR_W,
+            height: FINDBAR_H,
+            frame: false,
+            transparent: true,
+            resizable: false,
+            movable: false,
+            skipTaskbar: true,
+            show: false,
+            parent: mainWindow,
+            webPreferences: { nodeIntegration: true, contextIsolation: false }
+        });
+        findWin.loadFile(path.join(__dirname, 'findbar.html'));
+        findWin.on('closed', () => { findWin = null; });
+        findWin.webContents.on('did-finish-load', () => {
+            positionFindBar();
+            try { findWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+            findWin.show();
+            findWin.webContents.focus();
+        });
+    } else {
+        positionFindBar();
+        if (!findWin.isVisible()) findWin.show();
+        findWin.webContents.focus();
+    }
+}
+
+function hideFindBar() {
+    findBarVisible = false;
+    clearPageFind();
+    findActiveWebContents = null;
+    lastFindQuery = '';
+    if (findWin) {
+        try { findWin.close(); } catch (e) {}
+        findWin = null;
+    }
+}
+
+function clearPageFind() {
+    if (findActiveWebContents && !findActiveWebContents.isDestroyed()) {
+        try { findActiveWebContents.executeJavaScript(MAB_CLEAR_IMPL); } catch (e) {}
+    }
+}
+
+function findInPage(text, forward) {
+    text = text || '';
+    if (!findActiveWebContents || findActiveWebContents.isDestroyed()) {
+        findActiveWebContents = currentViewKey ? views.get(currentViewKey)?.view?.webContents : null;
+    }
+    if (!text) {
+        findState = { text: '', index: 0, matches: 0 };
+        clearPageFind();
+        sendFindResult(0, 0);
+        return;
+    }
+    // Update navigation state. The main process owns the index so it survives
+    // across separate executeJavaScript calls (each runs in a fresh context).
+    if (text !== findState.text) {
+        findState.text = text;
+        findState.index = 0;
+    } else if (findState.matches > 0) {
+        const total = findState.matches;
+        findState.index = forward
+            ? (findState.index + 1) % total
+            : (findState.index - 1 + total) % total;
+    }
+    if (!findActiveWebContents || findActiveWebContents.isDestroyed()) {
+        sendFindResult(0, 0);
+        return;
+    }
+    const code = `(${MAB_FIND_IMPL})(${JSON.stringify(text)}, ${findState.index})`;
+    try {
+        findActiveWebContents.executeJavaScript(code)
+            .then(result => {
+                if (result && typeof result.matches === 'number') {
+                    findState.matches = result.matches;
+                    sendFindResult(result.activeMatchOrdinal || 0, result.matches);
+                } else {
+                    findState.matches = 0;
+                    sendFindResult(0, 0);
+                }
+            })
+            .catch(err => {
+                console.warn('findInPage executeJavaScript failed:', err.message);
+                sendFindResult(0, 0);
+            });
+    } catch (e) {
+        console.warn('findInPage failed:', e.message);
+        sendFindResult(0, 0);
+    }
+}
+
+function sendFindResult(activeMatchOrdinal, matches) {
+    if (findWin && !findWin.isDestroyed()) {
+        findWin.webContents.send('find-result', { activeMatchOrdinal, matches });
+    }
+}
+
+// Ctrl+F / Cmd+F handling.
+// We use globalShortcut, but only keep it REGISTERED while MAB itself is in front.
+// On window blur (user switches to another application) we unregister so other
+// programs keep their own Ctrl+F; on focus we re-register. This avoids hijacking
+// Ctrl+F system-wide, while still making it work immediately on launch (no need to
+// click into the page first — WebContentsView.focus() is unreliable under BaseWindow).
+const FIND_ACCEL = 'CommandOrControl+F';
+function registerFindShortcut() {
+    try { globalShortcut.register(FIND_ACCEL, () => showFindBar()); } catch (e) {}
+}
+function unregisterFindShortcut() {
+    try { globalShortcut.unregister(FIND_ACCEL); } catch (e) {}
+}
+function setupFindShortcut() {
+    // Registered from the start (the app is in front right after launch), so the
+    // shortcut works without first clicking into the page.
+    registerFindShortcut();
+    mainWindow.on('focus', registerFindShortcut);
+    mainWindow.on('blur', () => {
+        // Ignore the transient blur caused by the find bar (child window) grabbing
+        // focus; only unregister when focus actually leaves the whole app.
+        setTimeout(() => {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
+            if (mainWindow.isFocused()) return;
+            if (findWin && !findWin.isDestroyed() && findWin.isFocused()) return;
+            unregisterFindShortcut();
+        }, 80);
+    });
+}
+
+// ---- IPC handlers for the find bar (from findbar.html) ----
+ipcMain.on('find-text', (e, text, forward) => {
+    findInPage(text, forward !== false);
+});
+
+ipcMain.on('find-clear', () => {
+    clearPageFind();
+    if (findWin && !findWin.isDestroyed()) {
+        findWin.webContents.send('find-result', { activeMatchOrdinal: 0, matches: 0 });
+    }
+});
+
+ipcMain.on('find-hide-bar', () => {
+    hideFindBar();
+});
+
 function switchView(viewKey) {
     const entry = views.get(viewKey);
     if (!entry || !mainWindow) return false;
@@ -504,10 +769,27 @@ function switchView(viewKey) {
     }, 60);
 
     currentViewKey = viewKey;
+    // Ensure the newly activated view actually receives keyboard events
+    // (Ctrl+F and other shortcuts are captured by the view's preload). Without
+    // this, a freshly started window may have no focused WebContentsView and
+    // Ctrl+F does nothing until the user clicks into the page first.
+    try { entry.view.webContents.focus(); } catch (e) {}
     syncTitle();
     notifyRenderer('view-switched', viewKey);
     syncToolbar();
     syncMenu();
+
+    // If the find bar is open, point it at the newly active view
+    if (findBarVisible) {
+        // Clear highlights on the previous view first
+        clearPageFind();
+        findActiveWebContents = entry.view.webContents;
+        // Re-run the last query against the new page
+        if (findActiveWebContents && !findActiveWebContents.isDestroyed()) {
+            const q = lastFindQuery;
+            if (q) findInPage(q, true);
+        }
+    }
 
     // Keep the custom toolbar row above any content view so it stays visible/clickable
     if (toolbarView && mainWindow.contentView) {
@@ -1168,15 +1450,53 @@ function createWindow() {
     });
 
     mainWindow.on('resize', () => { layout(); scheduleSave(); });
-    mainWindow.on('move', scheduleSave);
+    mainWindow.on('move', () => {
+        scheduleSave();
+        if (findWin && !findWin.isDestroyed()) positionFindBar();
+    });
     mainWindow.on('maximize', layout);
     mainWindow.on('unmaximize', layout);
     // Re-layout when the window is restored from minimized / shown again (e.g. after lock screen).
     // Without this the WebContentsView bounds can stay stale and the content area appears blank
     // until the next manual resize.
-    mainWindow.on('restore', layout);
-    mainWindow.on('show', layout);
-    mainWindow.on('minimize', layout);
+    mainWindow.on('restore', () => {
+        layout();
+        if (findWin && !findWin.isDestroyed()) { positionFindBar(); findWin.show(); }
+    });
+    mainWindow.on('show', () => {
+        if (findWin && !findWin.isDestroyed()) { positionFindBar(); findWin.show(); }
+    });
+    mainWindow.on('minimize', () => {
+        if (findWin && !findWin.isDestroyed()) findWin.hide();
+    });
+    // When the app loses focus (user switches to another application), hide the
+    // find bar so it doesn't float on top of other apps' windows.
+    mainWindow.on('blur', () => {
+        // Ignore the transient blur caused by the find bar (a child window) grabbing
+        // focus. Only hide when focus actually leaves the whole app.
+        setTimeout(() => {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
+            if (mainWindow.isFocused()) return;
+            if (findWin && !findWin.isDestroyed() && !findWin.isFocused()) {
+                findWin.hide();
+            }
+        }, 80);
+    });
+    // Restore it when the app is focused again and a search is active.
+    mainWindow.on('focus', () => {
+        if (findWin && !findWin.isDestroyed() && findBarVisible) {
+            positionFindBar();
+            findWin.show();
+        }
+        // Keep the active content view focused so in-page shortcuts (Ctrl+F, etc.)
+        // keep working. Skip this while the find bar itself owns the focus.
+        if (!findBarVisible && currentViewKey) {
+            const v = views.get(currentViewKey);
+            if (v && v.view && v.view.webContents && !v.view.webContents.isDestroyed()) {
+                try { v.view.webContents.focus(); } catch (e) {}
+            }
+        }
+    });
     // Save while the window is still alive, so we can read the real bounds and page URL
     mainWindow.on('close', () => {
         // Window is still alive here, so we can read the real bounds and page URL
@@ -1240,7 +1560,22 @@ function createWindow() {
         pushUpdateInfo();
     });
 
+    // Register the global Ctrl+F / Cmd+F shortcut for in-page search
+    setupFindShortcut();
+
     layout();
+
+    // Make sure the active content view has keyboard focus once the first page
+    // has settled, so Ctrl+F (and other in-page shortcuts) work immediately on
+    // launch. Doing this right away is unreliable — the view isn't focusable
+    // until the window is actually shown and the page starts loading.
+    setTimeout(() => {
+        if (!currentViewKey) return;
+        const v = views.get(currentViewKey);
+        if (v && v.view && v.view.webContents && !v.view.webContents.isDestroyed()) {
+            try { v.view.webContents.focus(); } catch (e) {}
+        }
+    }, 800);
 }
 
 app.whenReady().then(() => {
@@ -1316,6 +1651,8 @@ app.on('before-quit', () => {
     }
     for (const entry of views.values()) destroyView(entry);
     views.clear();
+    // Release any global shortcuts so they don't linger after quit.
+    try { globalShortcut.unregisterAll(); } catch (e) {}
 });
 
 app.on('window-all-closed', () => {
