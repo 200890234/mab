@@ -41,9 +41,12 @@
       "main.js",
       "preload.js",
       "zoom-preload.js",
+      "tts-edge.js",
       "toolbar-preload.js",
       "index.html",
       "toolbar.html",
+      "findbar.html",
+      "pronunciation.html",
       "assets/**",
       "README.md",
       "README.zh-CN.md",
@@ -71,5 +74,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }
+  },
+  "dependencies": {
+    "pinyin-pro": "^3.29.3",
+    "ws": "^8.18.0"
   }
 }

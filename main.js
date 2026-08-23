@@ -2,6 +2,7 @@ const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session, dialog,
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { pinyin } = require('pinyin-pro');
 
 // Quiet by default: raise Chromium's log level so noisy network-layer errors
 // (e.g. proxy SSL "handshake failed; net_error -100") don't flood the terminal.
@@ -166,6 +167,10 @@ function applyTheme(theme) {
     // Keep the floating find bar in sync with the app theme
     if (findWin && !findWin.isDestroyed()) {
         try { findWin.webContents.send('theme-changed', theme); } catch (e) {}
+    }
+    // Keep the pronunciation panel in sync with the app theme
+    if (pronWin && !pronWin.isDestroyed()) {
+        try { pronWin.webContents.send('theme-changed', theme); } catch (e) {}
     }
 }
 
@@ -1048,7 +1053,8 @@ function attachContextMenu(view) {
     const wc = view.webContents;
 
     wc.on('context-menu', (_e, params) => {
-        const menu = Menu.buildFromTemplate([
+        const sel = (params.selectionText || '').trim();
+        const tpl = [
             {
                 label: 'Back',
                 enabled: wc.canGoBack(),
@@ -1078,10 +1084,186 @@ function attachContextMenu(view) {
                 label: appConfig.lang === 'zh' ? '复制页面地址' : 'Copy page URL',
                 click: () => { try { clipboard.writeText(wc.getURL()); } catch (e) {} }
             }
-        ]);
+        ];
+        if (sel) {
+            tpl.push({ type: 'separator' });
+            // "Pronunciation" only makes sense for a word (phonetic lookup)
+            if (looksLikeWord(sel)) {
+                tpl.push({
+                    label: appConfig.lang === 'zh' ? '查看发音' : 'Pronunciation',
+                    click: () => showPronunciation(wc, params.x, params.y, 'phonetic')
+                });
+            }
+            tpl.push({
+                label: appConfig.lang === 'zh' ? '朗读' : 'Read aloud',
+                click: () => showPronunciation(wc, params.x, params.y, 'read')
+            });
+        }
+        const menu = Menu.buildFromTemplate(tpl);
         menu.popup();
     });
 }
+
+// ---------------- Pronunciation (select-word -> phonetic + neural TTS) ----------------
+
+let pronWin = null;
+const edgeTts = require('./tts-edge');
+
+function isChinese(text) {
+    return /[一-鿿]/.test(text);
+}
+// A "word" for phonetic lookup: no spaces, reasonably short, single script.
+function looksLikeWord(text) {
+    const t = text.trim();
+    if (t.length > 40) return false;
+    if (/\s/.test(t)) return false;
+    // pure ascii word (allow apostrophes/hyphens) or pure CJK
+    return /^[A-Za-z][A-Za-z'’-]*$/.test(t) || /^[一-鿿]+$/.test(t);
+}
+
+function hasSel(wc) {
+    return wc.executeJavaScript("window.getSelection ? window.getSelection().toString() : ''")
+        .then(s => (s || '').trim());
+}
+
+// Fetch phonetics for a word. Returns { phonetics:[{pos,text}], audioUrl, note }.
+async function fetchPhonetics(text) {
+    const word = text.trim();
+    if (isChinese(word)) {
+        // Chinese: show pinyin with tone marks (multiple chars -> space separated).
+        const py = pinyin(word, { toneType: 'symbol', type: 'array' }).join(' ');
+        return { phonetics: [{ text: py }], audioUrl: null, note: '' };
+    }
+    // English word via Free Dictionary API (free, no key).
+    const url = 'https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word.toLowerCase());
+    try {
+        const resp = await new Promise((resolve, reject) => {
+            https.get(url, res => {
+                if (res.statusCode !== 200) { res.resume(); return reject(new Error('status ' + res.statusCode)); }
+                let body = '';
+                res.setEncoding('utf8');
+                res.on('data', d => body += d);
+                res.on('end', () => resolve(body));
+            }).on('error', reject);
+        });
+        const data = JSON.parse(resp);
+        const entries = Array.isArray(data) ? data : [];
+        const phonetics = [];
+        let audioUrl = null;
+        for (const e of entries) {
+            const pos = e.partOfSpeech || '';
+            const phs = e.phonetics || [];
+            for (const p of phs) {
+                if (p.text) phonetics.push({ pos, text: p.text });
+                if (!audioUrl && p.audio) audioUrl = p.audio.startsWith('http') ? p.audio : 'https:' + p.audio;
+            }
+            if (phonetics.length >= 3) break;
+        }
+        if (phonetics.length) return { phonetics: phonetics.slice(0, 3), audioUrl, note: '' };
+        return { phonetics: [], audioUrl: null, note: '（无音标）' };
+    } catch (e) {
+        return { phonetics: [], audioUrl: null, note: '（音标获取失败，可朗读）' };
+    }
+}
+
+// Synthesize speech via Edge online neural TTS, returns base64 mp3.
+async function speakText(text, lang) {
+    const voice = lang === 'zh' ? 'zh-CN-XiaoxiaoNeural' : 'en-US-AriaNeural';
+    const buf = await edgeTts.tts(text, { voice });
+    return buf.toString('base64');
+}
+
+// Open (or reposition) the pronunciation floating panel near the cursor,
+// performing the requested action (phonetic lookup or read-aloud).
+async function showPronunciation(wc, x, y, mode) {
+    const sel = await hasSel(wc);
+    if (!sel) return;
+    openPronWindow();
+    if (!pronWin || pronWin.isDestroyed()) return;
+
+    // Position near the cursor. params.x/y are in the view's CSS coordinate space,
+    // which already accounts for page zoom. Translate into main-window content bounds.
+    const ca = getContentArea();
+    const b = mainWindow.getContentBounds();
+    let px = b.x + ca.x + x + 4;
+    let py = b.y + ca.y + y + 8;
+    const { width: pw, height: ph } = pronWin.getBounds();
+    const maxX = b.x + b.width - pw - 8;
+    const maxY = b.y + b.height - ph - 8;
+    if (px > maxX) px = maxX;
+    if (py > maxY) py = maxY;
+    if (py < b.y + ca.y) py = b.y + ca.y;
+    pronWin.setPosition(Math.round(px), Math.round(py));
+    if (!pronWin.isVisible()) pronWin.show();
+
+    const lang = isChinese(sel) ? 'zh' : 'en';
+    if (mode === 'phonetic') {
+        const info = await fetchPhonetics(sel);
+        pronSend('pron-show', { text: sel, ...info });
+    } else {
+        // Read aloud: show the text, then ask main to synthesize and stream audio back.
+        pronSend('pron-show', { text: sel, phonetics: [], note: '' });
+        try {
+            const b64 = await speakText(sel, lang);
+            pronSend('pron-audio', b64);
+        } catch (e) {
+            console.error('[pron] tts failed:', e);
+            pronSend('pron-audio', '');
+        }
+    }
+}
+
+// Safely send IPC to the pronunciation window (no-op if it was closed).
+function pronSend(channel, data) {
+    if (pronWin && !pronWin.isDestroyed()) {
+        try { pronWin.webContents.send(channel, data); } catch (e) {}
+    }
+}
+
+function openPronWindow() {
+    if (pronWin && !pronWin.isDestroyed()) return;
+    try {
+        const { BrowserWindow } = require('electron');
+        pronWin = new BrowserWindow({
+            width: 360,
+            height: 56,
+            frame: false,
+            transparent: true,
+            resizable: false,
+            movable: false,
+            skipTaskbar: true,
+            alwaysOnTop: true,
+            parent: mainWindow,
+            show: false,
+            title: 'Pronunciation',
+            webPreferences: { nodeIntegration: true, contextIsolation: false }
+        });
+        pronWin.setBackgroundColor('#00000000');
+        pronWin.webContents.loadFile(path.join(__dirname, 'pronunciation.html'));
+        pronWin.on('closed', () => { pronWin = null; });
+        pronWin.webContents.on('did-finish-load', () => {
+            if (!pronWin || pronWin.isDestroyed()) return;
+            try { pronWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+        });
+        // Hide when it loses focus (clicking elsewhere / switching apps)
+        pronWin.on('blur', () => { try { pronWin.hide(); } catch (e) {} });
+    } catch (e) {
+        console.error('[pron] openPronWindow failed:', e);
+        pronWin = null;
+    }
+}
+
+ipcMain.on('pron-play-tts', (_e, text) => {
+    if (!pronWin || pronWin.isDestroyed()) return;
+    const lang = isChinese(text) ? 'zh' : 'en';
+    speakText(text, lang)
+        .then(b64 => pronSend('pron-audio', b64))
+        .catch(() => pronSend('pron-audio', ''));
+});
+
+ipcMain.on('pron-hide', () => {
+    if (pronWin && !pronWin.isDestroyed()) { try { pronWin.hide(); } catch (e) {} }
+});
 
 function serializeView(key, entry) {
     const tool = AI_TOOLS[entry.toolKey];
