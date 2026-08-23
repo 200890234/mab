@@ -1,4 +1,4 @@
-const { app, BaseWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme, clipboard, globalShortcut } = require('electron');
+const { app, BaseWindow, BrowserWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme, clipboard, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -165,8 +165,8 @@ function applyTheme(theme) {
         toolbarView.webContents.send('theme-changed', theme);
     }
     // Keep the floating find bar in sync with the app theme
-    if (findWin && !findWin.isDestroyed()) {
-        try { findWin.webContents.send('theme-changed', theme); } catch (e) {}
+    if (findView && !findView.webContents.isDestroyed()) {
+        try { findView.webContents.send('theme-changed', theme); } catch (e) {}
     }
     // Keep the pronunciation panel in sync with the app theme
     if (pronWin && !pronWin.isDestroyed()) {
@@ -357,7 +357,7 @@ function layout() {
     }
 
     // Keep the find bar glued to the top-right of the content area
-    if (findWin && !findWin.isDestroyed()) positionFindBar();
+    if (findView && !findView.webContents.isDestroyed()) positionFindBar();
 }
 
 // On first launch the sidebar's internal viewport can lag behind its bounds, leaving a
@@ -579,7 +579,7 @@ try {
 } catch (e) {}
 `;
 
-let findWin = null;            // the floating find bar window
+let findView = null;           // the floating find bar (WebContentsView child of contentView)
 let findActiveWebContents = null;
 let lastFindQuery = '';
 let findBarVisible = false;
@@ -587,48 +587,48 @@ let findState = { text: '', index: 0, matches: 0 };
 const FINDBAR_W = 340;
 const FINDBAR_H = 40;
 
+let findViewAdded = false; // whether findView is currently attached to contentView
+function findViewAttached() {
+    return findViewAdded;
+}
+
 function positionFindBar() {
-    if (!findWin || !mainWindow) return;
-    const b = mainWindow.getContentBounds();
-    // place it at the top-right, just below the toolbar (custom menu bar)
-    const x = b.x + b.width - FINDBAR_W - 8;
-    const y = b.y + TOOLBAR_H + 8;
-    findWin.setBounds({ x, y, width: FINDBAR_W, height: FINDBAR_H });
-    // Keep it above the main window's own content, but NOT above other apps'
-    // windows. 'screen' would pin it on top of every application.
-    findWin.setAlwaysOnTop(true);
+    if (!findView || !mainWindow) return;
+    // Coordinates are relative to contentView (which sits below the native menu bar).
+    // Top-right, just below the toolbar row.
+    const { width } = mainWindow.getContentBounds();
+    const x = width - FINDBAR_W - 8;
+    const y = TOOLBAR_H + 8;
+    findView.setBounds({ x, y, width: FINDBAR_W, height: FINDBAR_H });
 }
 
 function showFindBar() {
     if (!mainWindow) return;
     findBarVisible = true;
     findActiveWebContents = currentViewKey ? views.get(currentViewKey)?.view?.webContents : null;
-    if (!findWin) {
-        const { BrowserWindow } = require('electron');
-        findWin = new BrowserWindow({
-            width: FINDBAR_W,
-            height: FINDBAR_H,
-            frame: false,
-            transparent: true,
-            resizable: false,
-            movable: false,
-            skipTaskbar: true,
-            show: false,
-            parent: mainWindow,
+    if (!findView) {
+        findView = new WebContentsView({
             webPreferences: { nodeIntegration: true, contextIsolation: false }
         });
-        findWin.loadFile(path.join(__dirname, 'findbar.html'));
-        findWin.on('closed', () => { findWin = null; });
-        findWin.webContents.on('did-finish-load', () => {
+        findView.setBackgroundColor('#00000000');
+        findView.webContents.loadFile(path.join(__dirname, 'findbar.html'));
+        findView.webContents.on('did-finish-load', () => {
+            if (!findView || findView.webContents.isDestroyed()) return;
+            try { findView.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+            if (mainWindow && mainWindow.contentView && !findViewAttached()) {
+                mainWindow.contentView.addChildView(findView);
+                findViewAdded = true;
+            }
             positionFindBar();
-            try { findWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
-            findWin.show();
-            findWin.webContents.focus();
+            try { findView.webContents.focus(); } catch (e) {}
         });
     } else {
+        if (mainWindow && mainWindow.contentView && !findViewAttached()) {
+            mainWindow.contentView.addChildView(findView);
+            findViewAdded = true;
+        }
         positionFindBar();
-        if (!findWin.isVisible()) findWin.show();
-        findWin.webContents.focus();
+        try { findView.webContents.focus(); } catch (e) {}
     }
 }
 
@@ -637,9 +637,15 @@ function hideFindBar() {
     clearPageFind();
     findActiveWebContents = null;
     lastFindQuery = '';
-    if (findWin) {
-        try { findWin.close(); } catch (e) {}
-        findWin = null;
+    if (findView) {
+        try {
+            if (mainWindow && mainWindow.contentView && findViewAttached()) {
+                mainWindow.contentView.removeChildView(findView);
+            }
+        } catch (e) {}
+        findViewAdded = false;
+        try { findView.webContents.close(); } catch (e) {}
+        findView = null;
     }
 }
 
@@ -698,8 +704,8 @@ function findInPage(text, forward) {
 }
 
 function sendFindResult(activeMatchOrdinal, matches) {
-    if (findWin && !findWin.isDestroyed()) {
-        findWin.webContents.send('find-result', { activeMatchOrdinal, matches });
+    if (findView && !findView.webContents.isDestroyed()) {
+        findView.webContents.send('find-result', { activeMatchOrdinal, matches });
     }
 }
 
@@ -722,15 +728,26 @@ function setupFindShortcut() {
     registerFindShortcut();
     mainWindow.on('focus', registerFindShortcut);
     mainWindow.on('blur', () => {
-        // Ignore the transient blur caused by the find bar (child window) grabbing
-        // focus; only unregister when focus actually leaves the whole app.
+        // Only unregister when focus actually leaves the whole app.
         setTimeout(() => {
             if (!mainWindow || mainWindow.isDestroyed()) return;
             if (mainWindow.isFocused()) return;
-            if (findWin && !findWin.isDestroyed() && findWin.isFocused()) return;
             unregisterFindShortcut();
         }, 80);
     });
+    // The pronunciation panel is a top-level always-on-top window, so hide it whenever
+    // focus leaves the whole app; but NOT when focus simply moves to it (user clicked in).
+    // (The find bar is now a child view of the main window, so it follows the main window.)
+    const hideFloatersOnLeave = () => {
+        const focused = BrowserWindow.getFocusedWindow();
+        if (focused === pronWin) return;
+        if (pronWin && !pronWin.isDestroyed()) {
+            try { pronWin.hide(); } catch (e) {}
+        }
+    };
+    mainWindow.on('blur', hideFloatersOnLeave);
+    mainWindow.on('minimize', hideFloatersOnLeave);
+    mainWindow.on('hide', hideFloatersOnLeave);
 }
 
 // ---- IPC handlers for the find bar (from findbar.html) ----
@@ -740,8 +757,8 @@ ipcMain.on('find-text', (e, text, forward) => {
 
 ipcMain.on('find-clear', () => {
     clearPageFind();
-    if (findWin && !findWin.isDestroyed()) {
-        findWin.webContents.send('find-result', { activeMatchOrdinal: 0, matches: 0 });
+    if (findView && !findView.webContents.isDestroyed()) {
+        findView.webContents.send('find-result', { activeMatchOrdinal: 0, matches: 0 });
     }
 });
 
@@ -1107,6 +1124,7 @@ function attachContextMenu(view) {
 // ---------------- Pronunciation (select-word -> phonetic + neural TTS) ----------------
 
 let pronWin = null;
+let pronActiveWebContents = null;
 const edgeTts = require('./tts-edge');
 
 function isChinese(text) {
@@ -1178,6 +1196,7 @@ async function speakText(text, lang) {
 async function showPronunciation(wc, x, y, mode) {
     const sel = await hasSel(wc);
     if (!sel) return;
+    pronActiveWebContents = wc;
     openPronWindow();
     if (!pronWin || pronWin.isDestroyed()) return;
 
@@ -1223,7 +1242,6 @@ function pronSend(channel, data) {
 function openPronWindow() {
     if (pronWin && !pronWin.isDestroyed()) return;
     try {
-        const { BrowserWindow } = require('electron');
         pronWin = new BrowserWindow({
             width: 360,
             height: 56,
@@ -1233,7 +1251,6 @@ function openPronWindow() {
             movable: false,
             skipTaskbar: true,
             alwaysOnTop: true,
-            parent: mainWindow,
             show: false,
             title: 'Pronunciation',
             webPreferences: { nodeIntegration: true, contextIsolation: false }
@@ -1245,8 +1262,14 @@ function openPronWindow() {
             if (!pronWin || pronWin.isDestroyed()) return;
             try { pronWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
         });
-        // Hide when it loses focus (clicking elsewhere / switching apps)
-        pronWin.on('blur', () => { try { pronWin.hide(); } catch (e) {} });
+        // When it loses focus (user clicked the page / another app), return keyboard
+        // focus to the underlying page so its inputs stay typeable, then hide.
+        pronWin.on('blur', () => {
+            if (pronActiveWebContents && !pronActiveWebContents.isDestroyed()) {
+                try { pronActiveWebContents.focus(); } catch (e) {}
+            }
+            try { pronWin.hide(); } catch (e) {}
+        });
     } catch (e) {
         console.error('[pron] openPronWindow failed:', e);
         pronWin = null;
@@ -1634,7 +1657,7 @@ function createWindow() {
     mainWindow.on('resize', () => { layout(); scheduleSave(); });
     mainWindow.on('move', () => {
         scheduleSave();
-        if (findWin && !findWin.isDestroyed()) positionFindBar();
+        if (findView && !findView.webContents.isDestroyed()) positionFindBar();
     });
     mainWindow.on('maximize', layout);
     mainWindow.on('unmaximize', layout);
@@ -1643,40 +1666,17 @@ function createWindow() {
     // until the next manual resize.
     mainWindow.on('restore', () => {
         layout();
-        if (findWin && !findWin.isDestroyed()) { positionFindBar(); findWin.show(); }
+        if (findView && !findView.webContents.isDestroyed()) positionFindBar();
     });
     mainWindow.on('show', () => {
-        if (findWin && !findWin.isDestroyed()) { positionFindBar(); findWin.show(); }
+        if (findView && !findView.webContents.isDestroyed()) positionFindBar();
     });
-    mainWindow.on('minimize', () => {
-        if (findWin && !findWin.isDestroyed()) findWin.hide();
-    });
-    // When the app loses focus (user switches to another application), hide the
-    // find bar so it doesn't float on top of other apps' windows.
-    mainWindow.on('blur', () => {
-        // Ignore the transient blur caused by the find bar (a child window) grabbing
-        // focus. Only hide when focus actually leaves the whole app.
-        setTimeout(() => {
-            if (!mainWindow || mainWindow.isDestroyed()) return;
-            if (mainWindow.isFocused()) return;
-            if (findWin && !findWin.isDestroyed() && !findWin.isFocused()) {
-                findWin.hide();
-            }
-        }, 80);
-    });
-    // Restore it when the app is focused again and a search is active.
+    // The find bar is a child view of the main window's contentView, so it follows the
+    // main window automatically (no separate show/hide needed). Reposition it when the
+    // app regains focus and a search is active.
     mainWindow.on('focus', () => {
-        if (findWin && !findWin.isDestroyed() && findBarVisible) {
+        if (findView && !findView.webContents.isDestroyed() && findBarVisible) {
             positionFindBar();
-            findWin.show();
-        }
-        // Keep the active content view focused so in-page shortcuts (Ctrl+F, etc.)
-        // keep working. Skip this while the find bar itself owns the focus.
-        if (!findBarVisible && currentViewKey) {
-            const v = views.get(currentViewKey);
-            if (v && v.view && v.view.webContents && !v.view.webContents.isDestroyed()) {
-                try { v.view.webContents.focus(); } catch (e) {}
-            }
         }
     });
     // Save while the window is still alive, so we can read the real bounds and page URL
