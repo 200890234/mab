@@ -2,6 +2,7 @@ const { app, BaseWindow, BrowserWindow, WebContentsView, Menu, ipcMain, shell, s
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const https = require('https');
 const { pinyin } = require('pinyin-pro');
 
 // Quiet by default: raise Chromium's log level so noisy network-layer errors
@@ -1154,16 +1155,25 @@ async function fetchPhonetics(text) {
     }
     // English word via Free Dictionary API (free, no key).
     const url = 'https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word.toLowerCase());
+    console.log('[Phonetic Lookup]', { word, url });
     try {
+        let statusCode = null;
         const resp = await new Promise((resolve, reject) => {
             https.get(url, res => {
-                if (res.statusCode !== 200) { res.resume(); return reject(new Error('status ' + res.statusCode)); }
+                statusCode = res.statusCode;
+                if (res.statusCode !== 200) { 
+                    let body = '';
+                    res.setEncoding('utf8');
+                    res.on('data', d => body += d);
+                    return reject(new Error('status ' + res.statusCode + ': ' + body));
+                }
                 let body = '';
                 res.setEncoding('utf8');
                 res.on('data', d => body += d);
                 res.on('end', () => resolve(body));
             }).on('error', reject);
         });
+        console.log('[Phonetic Response Status]', statusCode);
         const data = JSON.parse(resp);
         const entries = Array.isArray(data) ? data : [];
         const phonetics = [];
@@ -1180,6 +1190,13 @@ async function fetchPhonetics(text) {
         if (phonetics.length) return { phonetics: phonetics.slice(0, 3), audioUrl, note: '' };
         return { phonetics: [], audioUrl: null, note: '（无音标）' };
     } catch (e) {
+        // 调试日志：打印错误详情
+        console.error('[Phonetic Lookup Error]', {
+            word,
+            url,
+            error: e.message || e,
+            stack: e.stack ? e.stack.split('\n').slice(0, 3).join('\n') : 'N/A'
+        });
         return { phonetics: [], audioUrl: null, note: '（音标获取失败，可朗读）' };
     }
 }

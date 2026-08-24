@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.0
+- Added in-page search (`Ctrl+F`): a floating find bar shows match count (e.g. `3/12`) with previous/next navigation; `Enter` jumps to the next match, `Shift+Enter` to the previous, and `Esc` closes the bar. The shortcut is scoped so it won't conflict with the browser's native search.
+- Added phonetic lookup & read-aloud on right-click: select any text and right-click to show IPA phonetics, part of speech, and a speaker button that plays either the dictionary's official audio or synthesized speech.
+- Added a self-contained Microsoft Edge online neural TTS engine (`tts-edge.js`): re-implements the edge-tts protocol including the Sec-MS-GEC anti-bot token, fixing the HTTP 403 error from the stale npm `edge-tts` package; pure Node.js with no Python runtime required (defaults to `en-US-AriaNeural`).
+- Added the `ws` dependency for WebSocket communication used by the TTS engine and find bar.
+
 ## v1.3.1
 - Fixed a blank strip at the bottom of the sidebar and the content area on startup (re-run layout to resync the viewport).
 - Hidden the vertical scrollbar on the left session list while keeping scrolling functional.
