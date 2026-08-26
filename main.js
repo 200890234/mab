@@ -272,7 +272,8 @@ function saveState() {
         const tmp = file + '.tmp';
         fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
         fs.renameSync(tmp, file);
-        console.log('[persist] session state saved:', data.sessions.length, 'tabs ->', file);
+        // Note: no console.log here — saveState runs on every structural change and
+        // would otherwise flood the terminal (hundreds of lines per session).
     } catch (err) {
         console.error('[persist] failed to save session state:', err);
     }
@@ -306,6 +307,14 @@ let saveTimer = null;
 function scheduleSave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveState, 800);
+}
+
+// Immediate save for structural changes (add/remove/reorder/rename tab, switch,
+// sidebar resize). These are infrequent but must not be lost if the process is
+// killed (e.g. via Task Manager) before the 800ms debounce window elapses.
+function saveStateNow() {
+    clearTimeout(saveTimer);
+    saveState();
 }
 
 let lastWindowBounds = null;
@@ -1326,7 +1335,7 @@ function renameSession(viewKey, newName) {
     entry.name = trimmed;
     notifyRenderer('view-renamed', { key: viewKey, name: trimmed });
     if (viewKey === currentViewKey) syncTitle();
-    scheduleSave();
+    saveStateNow();
 }
 
 function reorderView(fromKey, toKey, after = false) {
@@ -1354,7 +1363,7 @@ function reorderView(fromKey, toKey, after = false) {
     // Fallback (should not trigger in practice)
     if (!newMap.has(fromKey)) newMap.set(fromKey, entry);
     views = newMap;
-    scheduleSave();
+    saveStateNow();
     notifyRenderer('state-sync', {
         tools: Object.fromEntries(
             Object.entries(AI_TOOLS).map(([k, t]) => [k, { name: t.name, icon: t.icon, color: t.color, logo: t.logo || null }])
@@ -1412,7 +1421,7 @@ function addSession(toolKey, { notify = true, activate = true, restore = null } 
 
     if (notify) notifyRenderer('view-created', serializeView(viewKey, entry));
     if (activate) switchView(viewKey);
-    scheduleSave();
+    saveStateNow();
     return viewKey;
 }
 
@@ -1465,7 +1474,7 @@ function closeSession(viewKey) {
         if (nextKey) switchView(nextKey);
     }
     notifyRenderer('view-closed', viewKey);
-    scheduleSave();
+    saveStateNow();
 }
 
 // ---------------- Custom web toolbar ----------------
@@ -1512,7 +1521,7 @@ function addWebTool(url, title, { restore = null, activate = true, notify = true
 
     syncToolbar();
     if (activate) switchView(viewKey);
-    if (notify) scheduleSave();
+    if (notify) saveStateNow();
     return viewKey;
 }
 
@@ -1530,7 +1539,7 @@ function closeWebTool(viewKey) {
     }
     syncToolbar();
     notifyRenderer('view-closed', viewKey);
-    scheduleSave();
+    saveStateNow();
 }
 
 function notifyToolbar(channel, ...args) {
@@ -1673,7 +1682,7 @@ function createWindow() {
 
     mainWindow.on('resize', () => { layout(); scheduleSave(); });
     mainWindow.on('move', () => {
-        scheduleSave();
+        saveStateNow();
         if (findView && !findView.webContents.isDestroyed()) positionFindBar();
     });
     mainWindow.on('maximize', layout);
@@ -1800,7 +1809,7 @@ ipcMain.on('sidebar-resize', (_event, width) => {
     const w = Math.round(Number(width) || sidebarWidth);
     sidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w));
     layout(); // layout() already pushes set-sidebar-width to the toolbar
-    scheduleSave();
+    saveStateNow();
 });
 ipcMain.on('get-autostart', (event) => {
     event.returnValue = getAutoStart();
@@ -1850,6 +1859,13 @@ app.on('before-quit', () => {
     }
     for (const entry of views.values()) destroyView(entry);
     views.clear();
+    // The pronunciation panel is a separate always-on-top BrowserWindow. If it was
+    // only hidden (not destroyed) it would keep the app alive after the main window
+    // closes, leaving the process (and the npm console) running. Destroy it on quit.
+    if (pronWin && !pronWin.isDestroyed()) {
+        try { pronWin.destroy(); } catch (e) {}
+        pronWin = null;
+    }
     // Release any global shortcuts so they don't linger after quit.
     try { globalShortcut.unregisterAll(); } catch (e) {}
 });
