@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.0
+- Added a **Cache** entry to the Settings panel: it shows how much disk the tab partitions currently occupy, and a `Clean` action that clears the HTTP and code caches of every partition still in use (through Electron's own APIs, so cookies, local storage and login state are preserved) and deletes partition directories that no longer belong to any tab, such as closed web-tool tabs and leftovers from older naming schemes. A partition is only removed when nothing references it, and the freed space is reported when the cleanup finishes.
+- Tabs are now written to `sessions.json` as soon as they are created or closed, instead of waiting for the debounced save, so a crash or a forced kill no longer loses tab changes.
+- Fixed the app not exiting completely: the floating pronunciation window is destroyed on `before-quit`, so no lingering process keeps it alive in the background.
+- Removed the noisy session-save logging.
+- Removed the dead `cleanupLegacyPartitions()` helper, which relied on a `session.getAllPaths` API that does not exist and therefore never ran; orphaned partition cleanup is now handled by the Settings action instead.
+
 ## v1.4.0
 - Added in-page search (`Ctrl+F`): a floating find bar shows match count (e.g. `3/12`) with previous/next navigation; `Enter` jumps to the next match, `Shift+Enter` to the previous, and `Esc` closes the bar. The shortcut is scoped so it won't conflict with the browser's native search.
 - Added phonetic lookup & read-aloud on right-click: select any text and right-click to show IPA phonetics, part of speech, and a speaker button that plays either the dictionary's official audio or synthesized speech.
