@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5.1
+- Added toolbar bookmarks ("favorites"): persistent shortcuts for frequently visited sites such as daily check-in pages. Each bookmark gets a dedicated partition, so its login state survives closing the tab — open the site, check in, close the tab, and you are still logged in the next day. Bookmarks are managed from a right-click menu (open/close tab, edit name & URL, remove), can be reordered by drag & drop, and the row scrolls horizontally when they overflow it.
+- The toolbar `+` button now adds a bookmark (name optional) and opens it immediately, instead of opening a blank tab.
+- Sidebar: removed the unusable "Web" entry — creating a session there opened an empty `about:blank` page with no address bar; arbitrary web pages are added via the toolbar `+` only.
+- AI tools in the sidebar are reordered and renamed to: ChatGPT, Gemini, Claude, DeepSeek, Qwen, Doubao, ChatGLM.
+- Fixed false "Failed to load (-3)" error pages: a navigation interrupted by the site itself (e.g. a redirect replacing its own load) is now ignored instead of retried until an error page appeared.
+- Fixed reloading a web tab resetting it to a blank page: the reload now uses the live page URL or, on an error page, the bookmark URL.
+- Fixed the Cancel button in the toolbar "+" form being pushed out of the visible area.
+- Removing a bookmark now also closes its open tab, so the toolbar reflects the removal immediately.
+
 ## v1.5.0
 - Added a **Cache** entry to the Settings panel: it shows how much disk the tab partitions currently occupy, and a `Clean` action that clears the HTTP and code caches of every partition still in use (through Electron's own APIs, so cookies, local storage and login state are preserved) and deletes partition directories that no longer belong to any tab, such as closed web-tool tabs and leftovers from older naming schemes. A partition is only removed when nothing references it, and the freed space is reported when the cleanup finishes.
 - Tabs are now written to `sessions.json` as soon as they are created or closed, instead of waiting for the debounced save, so a crash or a forced kill no longer loses tab changes.
