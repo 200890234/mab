@@ -415,7 +415,7 @@ p{color:#aaa;font-size:13px;line-height:1.6;word-break:break-all}
 </style></head><body><div class="error">
 <h1>⚠️ Failed to load</h1><p>${String(message || 'Please check your network connection or proxy settings')
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
-<p style="color:#666;margin-top:16px">Click this session in the sidebar to reload</p>
+<p style="color:#666;margin-top:16px">Use View &gt; Reload in the toolbar menu to try again</p>
 </div></body></html>`;
     // Must be encoded, otherwise newlines/quotes would truncate the data URL
     return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
@@ -482,6 +482,14 @@ function createView(tool, partitionName, initialURL) {
     // Handle page navigation failures (main frame only)
     wc.on('did-fail-load', (_e, errorCode, errorDescription, _url, isMainFrame) => {
         if (!isMainFrame) return;
+        // ERR_ABORTED is usually benign: the page replaced its own navigation (redirect,
+        // location.replace, meta refresh). Retrying here would interrupt that new navigation
+        // and re-trigger the abort, ending in a false error page after MAX_RETRY. Only treat
+        // it as a real failure when nothing has loaded yet (no committed URL at all).
+        if (errorCode === -3) {
+            const current = wc.getURL();
+            if (current && !current.startsWith('about:blank') && !current.startsWith('data:')) return;
+        }
         if (RETRIABLE.has(errorCode) && retryCount < MAX_RETRY) {
             retryCount++;
             console.warn(`session ${partitionName} load interrupted (${errorCode}), retry #${retryCount}…`);
@@ -2142,9 +2150,26 @@ ipcMain.handle('set-config', async (_event, patch) => {
 ipcMain.on('reload-view', (_event, viewKey) => {
     const entry = views.get(viewKey);
     if (!entry || entry.view.webContents.isDestroyed()) return;
-    const tool = AI_TOOLS[entry.toolKey];
-    // Error pages can't reload back to the original site, so directly reload the target URL
-    entry.view.webContents.loadURL(tool.url).catch(err => console.error('reload failed:', err));
+    // A data: error page cannot reload back to the original site, so reload a real URL:
+    // web tabs prefer the live/bookmark URL; AI sessions go back to their tool home page.
+    let url = null;
+    if (entry.toolKey === 'customWeb') {
+        const live = getLiveURL(entry);
+        if (live) {
+            url = live;
+        } else if (entry.bookmarkId) {
+            const bm = bookmarks.find(b => b.id === entry.bookmarkId);
+            if (bm) url = bm.url;
+        }
+        if (!url) {
+            const current = entry.view.webContents.getURL() || '';
+            if (current && !current.startsWith('data:')) url = current;
+        }
+    } else {
+        const tool = AI_TOOLS[entry.toolKey];
+        url = tool && tool.url;
+    }
+    if (url) entry.view.webContents.loadURL(url).catch(err => console.error('reload failed:', err));
 });
 
 app.on('before-quit', () => {
