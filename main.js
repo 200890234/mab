@@ -1569,25 +1569,161 @@ function clearPartitionData(partitionName) {
     }
 }
 
-// Clean up the legacy _session_N partitions left over from before the upgrade (login state is now
-// unified under ${toolKey}_account). These directories are obsolete and waste disk space; safe to
-// delete at startup.
-function cleanupLegacyPartitions() {
+// ---------------- Disk usage / cache maintenance (Settings > Cache) ----------------
+// Every tab runs in its own `persist:` partition, and Chromium keeps a full set of on-disk caches
+// per partition (HTTP cache + V8 code cache + GPU caches). A dozen tabs easily reach several GB,
+// and closing a tab deliberately keeps its data so the login survives. The Settings panel
+// therefore offers an explicit "Clean" action, which does two things:
+//   1. Clears the HTTP + code caches of every partition still in use, through Electron's own APIs
+//      (never by deleting files) — cookies / local storage / login state are left untouched.
+//   2. Deletes partition directories that no tab references any more: closed web-tool tabs and
+//      leftovers from older partition naming schemes. Their login data is unreachable regardless.
+// Anything not provably unreferenced is kept.
+const PARTITIONS_DIR = () => path.join(getUserDataDir(), 'Partitions');
+// Cache dirs sitting directly under userData (shared by the sidebar / toolbar / find-bar renderers)
+const ROOT_CACHE_DIRS = ['Cache', 'Code Cache', 'GPUCache', 'DawnWebGPUCache', 'DawnGraphiteCache'];
+
+// Partition names that must never be touched: tabs currently mounted in the window, plus tabs
+// recorded in sessions.json. The state file matters because a partition's login state is only
+// loaded when its view is created — deleting a recorded partition early would log the user out.
+function getActivePartitions() {
+    const active = new Set();
+    for (const entry of views.values()) {
+        if (entry && entry.partition) active.add(entry.partition);
+    }
     try {
-        const all = session.getAllPaths ? session.getAllPaths() : {};
-        for (const [partition, dir] of Object.entries(all)) {
-            if (partition.includes('_session_')) {
-                try {
-                    fs.rmSync(dir, { recursive: true, force: true });
-                    console.log(`[cleanup] deleted obsolete partition: ${partition}`);
-                } catch (e) {
-                    console.error(`[cleanup] failed to delete ${partition}:`, e);
-                }
+        const raw = JSON.parse(fs.readFileSync(STATE_FILE(), 'utf8'));
+        for (const s of (Array.isArray(raw.sessions) ? raw.sessions : [])) {
+            if (s && typeof s.partition === 'string') active.add(s.partition);
+        }
+        // Web-tool records only store their key; derive the partition the way addWebTool builds it
+        for (const w of (Array.isArray(raw.webTools) ? raw.webTools : [])) {
+            if (w && typeof w.key === 'string') active.add(`webtool_${w.key}`);
+        }
+    } catch (e) { /* unreadable state file: fall back to the mounted views only */ }
+    return active;
+}
+
+// Recursive directory size. Async so scanning several GB never blocks the main thread.
+// Stats are issued in parallel batches: a store this size holds tens of thousands of files, and
+// awaiting them one by one turns a sub-second scan into a multi-second one.
+const STAT_BATCH_SIZE = 500;
+async function dirSize(root) {
+    let total = 0;
+    let batch = [];
+    const flush = async () => {
+        if (!batch.length) return;
+        const paths = batch;
+        batch = [];
+        const sizes = await Promise.all(paths.map(p => fs.promises.stat(p).then(s => s.size, () => 0)));
+        for (const size of sizes) total += size;
+    };
+    const stack = [root];
+    while (stack.length) {
+        const dir = stack.pop();
+        let entries;
+        try {
+            entries = await fs.promises.readdir(dir, { withFileTypes: true });
+        } catch (e) {
+            continue; // missing or locked directory
+        }
+        for (const ent of entries) {
+            if (ent.isDirectory()) {
+                stack.push(path.join(dir, ent.name));
+            } else if (ent.isFile()) {
+                batch.push(path.join(dir, ent.name));
+                if (batch.length >= STAT_BATCH_SIZE) await flush();
             }
         }
-    } catch (e) {
-        console.error('[cleanup] failed to enumerate partitions:', e);
     }
+    await flush();
+    return total;
+}
+
+// Total disk usage of the partition store, split into "in use" and "orphaned"
+async function getCacheUsage() {
+    const usage = { total: 0, activeSize: 0, orphanSize: 0, partitionCount: 0, orphanCount: 0 };
+    const active = getActivePartitions();
+    let entries = [];
+    try {
+        entries = await fs.promises.readdir(PARTITIONS_DIR(), { withFileTypes: true });
+    } catch (e) { /* no partitions yet */ }
+    for (const ent of entries) {
+        if (!ent.isDirectory()) continue;
+        usage.partitionCount += 1;
+        const size = await dirSize(path.join(PARTITIONS_DIR(), ent.name));
+        usage.total += size;
+        if (active.has(ent.name)) {
+            usage.activeSize += size;
+        } else {
+            usage.orphanSize += size;
+            usage.orphanCount += 1;
+        }
+    }
+    for (const name of ROOT_CACHE_DIRS) {
+        usage.total += await dirSize(path.join(getUserDataDir(), name));
+    }
+    return usage;
+}
+
+// Delete partition directories no tab references any more
+async function removeOrphanPartitions() {
+    let entries = [];
+    try {
+        entries = await fs.promises.readdir(PARTITIONS_DIR(), { withFileTypes: true });
+    } catch (e) {
+        return { removed: 0, failed: 0, bytes: 0 };
+    }
+    let removed = 0, failed = 0, bytes = 0;
+    for (const ent of entries) {
+        if (!ent.isDirectory()) continue;
+        // Re-check the live whitelist for every entry, so a tab opened while we run is never deleted
+        if (getActivePartitions().has(ent.name)) continue;
+        const full = path.join(PARTITIONS_DIR(), ent.name);
+        const size = await dirSize(full);
+        try {
+            await fs.promises.rm(full, { recursive: true, force: true });
+            removed += 1;
+            bytes += size;
+            console.log(`[cleanup] removed orphan partition ${ent.name} (${Math.round(size / 1048576)} MB)`);
+        } catch (e) {
+            failed += 1;
+            console.warn(`[cleanup] could not remove ${ent.name}:`, e.message);
+        }
+    }
+    return { removed, failed, bytes };
+}
+
+// Run the cleanup and report what was freed (used by the Settings > Cache button)
+async function cleanCache() {
+    const before = await getCacheUsage();
+    let failed = 0;
+
+    // 1) Clear the caches of every partition still in use, via Electron (login state is unaffected)
+    for (const partition of getActivePartitions()) {
+        const ses = session.fromPartition(`persist:${partition}`);
+        try { await ses.clearCache(); } catch (e) { failed += 1; }
+        try { await ses.clearCodeCaches({}); } catch (e) { failed += 1; }
+    }
+    // The sidebar / toolbar / find-bar renderers all live in the default session
+    try { await session.defaultSession.clearCache(); } catch (e) { failed += 1; }
+    try { await session.defaultSession.clearCodeCaches({}); } catch (e) { failed += 1; }
+
+    // 2) Drop partition directories that no tab references any more
+    const orphans = await removeOrphanPartitions();
+
+    const after = await getCacheUsage();
+    console.log(`[cleanup] freed ${Math.round((before.total - after.total) / 1048576)} MB `
+        + `(${orphans.removed} orphan partition(s), ${orphans.failed} failed)`);
+    return {
+        beforeTotal: before.total,
+        afterTotal: after.total,
+        freed: Math.max(0, before.total - after.total),
+        partitionCount: after.partitionCount,
+        removedPartitions: orphans.removed,
+        removeFailed: orphans.failed,
+        failed
+    };
 }
 
 function createWindow() {
@@ -1617,9 +1753,6 @@ function createWindow() {
         })()
     });
     lastWindowBounds = mainWindow.getBounds();
-
-    // Clean up obsolete partitions left over from before the upgrade
-    cleanupLegacyPartitions();
 
     // Apply saved auto-start preference
     try { setAutoStart(getAutoStart()); } catch (e) { console.error('[autostart] apply preference failed:', e); }
@@ -1823,6 +1956,9 @@ ipcMain.on('show-menu-popup', (_event, type, x, y) => {
     const menu = buildPopupMenu(type);
     menu.popup({ window: mainWindow, x, y });
 });
+// Settings > Cache: report disk usage / run the cleanup
+ipcMain.handle('get-cache-usage', () => getCacheUsage());
+ipcMain.handle('clean-cache', () => cleanCache());
 // Language / theme config
 ipcMain.handle('get-config', () => loadConfig());
 ipcMain.handle('set-config', async (_event, patch) => {

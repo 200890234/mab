@@ -274,6 +274,34 @@
         }
         .setting-row + .setting-row { border-top: 1px solid var(--border); }
 
+        /* Cache row: disk usage readout + Clean button */
+        .cache-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .cache-size {
+            font-size: 12px;
+            color: var(--text-dim);
+            font-variant-numeric: tabular-nums;
+        }
+        .mini-btn {
+            background: var(--btn-bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 3px 10px;
+            font-family: inherit;
+            font-size: 12px;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background 0.15s, transform 0.1s;
+        }
+        .mini-btn:hover { background: var(--btn-hover); }
+        .mini-btn:active { transform: scale(0.96); }
+        .mini-btn:disabled { opacity: 0.55; cursor: default; }
+
         /* En/Cn and Light/Dark segmented toggle control */
         .seg {
             display: inline-flex;
@@ -434,6 +462,14 @@
                             <span class="seg-opt" data-theme="dark">Dark</span>
                         </span>
                     </div>
+                    <!-- Disk usage of the tab partitions (per-tab caches) + cleanup action -->
+                    <div class="setting-row">
+                        <span data-i18n="cache">Cache</span>
+                        <span class="cache-actions">
+                            <span class="cache-size" id="cacheSize">—</span>
+                            <button class="mini-btn" id="btnCleanCache" data-i18n="clean">Clean</button>
+                        </span>
+                    </div>
                     <!-- To add more settings later, append a .setting-row following this structure -->
                 </div>
             </div>
@@ -497,6 +533,11 @@
                 closeSession: 'Close session',
                 rename: 'Rename',
                 collapse: 'Collapse',
+                cache: 'Cache',
+                clean: 'Clean',
+                cleaning: 'Cleaning…',
+                cacheCleaned: (size) => `Freed ${size}`,
+                cacheCleanFailed: 'Cache cleanup failed',
             },
             zh: {
                 settings: '设置',
@@ -508,6 +549,11 @@
                 closeSession: '关闭会话',
                 rename: '重命名',
                 collapse: '收起',
+                cache: '缓存',
+                clean: '清理',
+                cleaning: '清理中…',
+                cacheCleaned: (size) => `已释放 ${size}`,
+                cacheCleanFailed: '缓存清理失败',
             }
         };
         let appLang = 'en';
@@ -579,6 +625,8 @@
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 panel.classList.toggle('open');
+                // Refresh the disk-usage readout every time the panel is opened
+                if (panel.classList.contains('open')) refreshCacheUsage();
             });
 
             // Auto-collapse when clicking anywhere outside the panel
@@ -619,6 +667,54 @@
                 try { window.electronAPI.setAutoStart(toggle.checked); } catch (e) {}
             });
         })();
+
+        // ---------------- Cache maintenance (Settings > Cache) ----------------
+        const cacheSizeEl = document.getElementById('cacheSize');
+        const cleanBtn = document.getElementById('btnCleanCache');
+        let cacheBusy = false;
+
+        function formatSize(bytes) {
+            const n = Number(bytes) || 0;
+            if (n < 1024) return `${n} B`;
+            const units = ['KB', 'MB', 'GB', 'TB'];
+            let v = n / 1024;
+            let i = 0;
+            while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+            return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
+        }
+
+        // Ask the main process how much disk the tab partitions occupy.
+        // Scanning a multi-GB store takes a moment, so show a placeholder while it runs.
+        async function refreshCacheUsage() {
+            cacheSizeEl.textContent = '…';
+            try {
+                const usage = await window.electronAPI.getCacheUsage();
+                cacheSizeEl.textContent = formatSize(usage && usage.total);
+                if (usage) cacheSizeEl.title = `${usage.partitionCount} partitions`;
+            } catch (e) {
+                console.error('[cache] failed to read disk usage:', e);
+                cacheSizeEl.textContent = '—';
+            }
+        }
+
+        cleanBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (cacheBusy) return;
+            cacheBusy = true;
+            cleanBtn.disabled = true;
+            cleanBtn.textContent = t('cleaning');
+            try {
+                const res = await window.electronAPI.cleanCache();
+                cacheSizeEl.textContent = formatSize(res && res.afterTotal);
+                showToast(t('cacheCleaned')(formatSize(res && res.freed)));
+            } catch (err) {
+                showToast(t('cacheCleanFailed'));
+            } finally {
+                cleanBtn.textContent = t('clean');
+                cleanBtn.disabled = false;
+                cacheBusy = false;
+            }
+        });
 
         // State comes entirely from the main process, to avoid duplicated hardcoded logic on both ends
         let AI_TOOLS = {};
