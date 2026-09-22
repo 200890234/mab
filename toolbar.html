@@ -145,6 +145,7 @@
     .add-form.show { display: flex; }
     .add-form input {
         flex: 1;
+        min-width: 0; /* otherwise the intrinsic input width pushes the buttons out of the box */
         height: 20px;
         padding: 0 4px;
         border-radius: 3px;
@@ -166,6 +167,9 @@
         font-size: 11px;
     }
     .add-form .ok { background: var(--accent); color: #fff; border-color: var(--accent); }
+    /* Bookmark drag & drop reordering */
+    .tool-btn.dragging { opacity: 0.4; }
+    .tool-btn.drop-hint { box-shadow: -2px 0 0 var(--accent); }
 </style>
 </head>
 <body>
@@ -201,6 +205,7 @@
     let bookmarksList = []; // persistent shortcuts: [{ id, name, url }]
     let activeKey = null;
     let editingId = null;   // set while the inline form edits an existing bookmark
+    let dragBmId = null;    // bookmark id currently being dragged for reordering
 
     function normalizeUrl(u) {
         u = (u || '').trim();
@@ -233,6 +238,35 @@
                 btn.appendChild(x);
             }
             btn.addEventListener('click', () => window.toolbarAPI.openBookmark(bm.id));
+            // Drag to reorder: drop onto another bookmark to take its position
+            btn.draggable = true;
+            btn.addEventListener('dragstart', (e) => {
+                dragBmId = bm.id;
+                e.dataTransfer.effectAllowed = 'move';
+                try { e.dataTransfer.setData('text/plain', bm.id); } catch (err) { /* optional */ }
+                btn.classList.add('dragging');
+            });
+            btn.addEventListener('dragend', () => {
+                dragBmId = null;
+                btn.classList.remove('dragging');
+                toolsEl.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'));
+            });
+            btn.addEventListener('dragover', (e) => {
+                if (!dragBmId || dragBmId === bm.id) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                btn.classList.add('drop-hint');
+            });
+            btn.addEventListener('dragleave', (e) => {
+                if (e.relatedTarget && btn.contains(e.relatedTarget)) return;
+                btn.classList.remove('drop-hint');
+            });
+            btn.addEventListener('drop', (e) => {
+                e.preventDefault();
+                btn.classList.remove('drop-hint');
+                if (dragBmId && dragBmId !== bm.id) window.toolbarAPI.reorderBookmark(dragBmId, bm.id);
+                dragBmId = null;
+            });
             btn.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
                 e.stopPropagation();

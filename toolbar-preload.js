@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('toolbarAPI', {
     openBookmark: (id) => ipcRenderer.send('bookmark-open', id),
     addBookmark: (url, name) => ipcRenderer.send('bookmark-add', url, name),
     updateBookmark: (id, patch) => ipcRenderer.send('bookmark-update', id, patch),
+    reorderBookmark: (fromId, toId) => ipcRenderer.send('reorder-bookmark', fromId, toId),
     // Main asks the toolbar to show the inline edit form for a bookmark
     onBookmarkEdit: (cb) => ipcRenderer.on('bookmark-edit', (_e, id, name, url) => cb(id, name, url)),
     // Right-click context menu (native popup) for a bookmark / ad-hoc tab

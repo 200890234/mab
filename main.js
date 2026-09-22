@@ -1654,10 +1654,10 @@ function removeBookmark(id) {
     const idx = bookmarks.findIndex(b => b.id === id);
     if (idx === -1) return;
     bookmarks.splice(idx, 1);
-    // If its tab is open, detach it from the bookmark instead of killing it — the user can
-    // still close the tab like any ad-hoc one; nothing is lost either way.
+    // If its tab is open, close it too: "remove bookmark" means the site is no longer wanted,
+    // and leaving an orphan tab behind reads as "the bookmark would not go away".
     const tabKey = findBookmarkTab(id);
-    if (tabKey) views.get(tabKey).bookmarkId = null;
+    if (tabKey) closeWebTool(tabKey);
     syncBookmarks();
     syncToolbar();
     saveStateNow();
@@ -1673,6 +1673,17 @@ function openBookmark(id, { activate = true } = {}) {
     }
     // Dedicated stable partition: login state survives closing the tab.
     addWebTool(bm.url, bm.name, { bookmarkId: id, partitionName: `bookmark_${id}`, activate });
+}
+
+// Drag & drop reordering from the toolbar: move the `fromId` bookmark onto `toId`'s slot.
+function reorderBookmark(fromId, toId) {
+    const from = bookmarks.findIndex(b => b.id === fromId);
+    const to = bookmarks.findIndex(b => b.id === toId);
+    if (from === -1 || to === -1 || from === to) return;
+    const [bm] = bookmarks.splice(from, 1);
+    bookmarks.splice(to, 0, bm);
+    syncBookmarks();
+    saveStateNow();
 }
 
 function closeWebTool(viewKey) {
@@ -2107,6 +2118,7 @@ ipcMain.on('add-webtool', (_event, url, name) => { addWebTool(url, name); });
 ipcMain.on('bookmark-open', (_event, id) => openBookmark(id));
 ipcMain.on('bookmark-add', (_event, url, name) => { addBookmark(url, name); });
 ipcMain.on('bookmark-update', (_event, id, patch) => { updateBookmark(id, patch || {}); });
+ipcMain.on('reorder-bookmark', (_event, fromId, toId) => reorderBookmark(fromId, toId));
 // Right-click context menu on a bookmark / ad-hoc toolbar tab
 ipcMain.on('show-ctx-popup', (_event, kind, id, x, y) => { showCtxPopup(kind, id, x, y); });
 ipcMain.on('switch-webtool', (_event, viewKey) => switchView(viewKey));
