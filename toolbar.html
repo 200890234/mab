@@ -98,6 +98,12 @@
         white-space: nowrap;
         font-size: 12px;
         line-height: 1;
+        max-width: 150px; /* many bookmarks: truncate long labels, full name in the hover tooltip */
+    }
+    .tool-btn .label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
     }
     .tool-btn:hover { background: var(--hover); }
     .tool-btn.active { background: var(--active); }
@@ -107,6 +113,10 @@
         padding-left: 2px;
     }
     .tool-btn .x:hover { opacity: 1; color: #ff6b6b; }
+    /* Bookmark buttons only show the close control on hover: closing hides the tab but
+       keeps the bookmark itself, which is easy to mis-tap if always visible. */
+    .tool-btn.bm .x { display: none; }
+    .tool-btn.bm:hover .x { display: inline; }
 
     .add-wrap { position: relative; display: inline-block; flex-shrink: 0; }
     .add-btn {
@@ -129,7 +139,7 @@
         border: 1px solid var(--border);
         border-radius: 4px;
         padding: 0 4px;
-        width: 300px;
+        width: 380px;
         height: 26px;
     }
     .add-form.show { display: flex; }
@@ -168,6 +178,7 @@
         <div class="add-wrap">
             <button class="add-btn" id="addBtn" title="添加网页工具">+</button>
             <div class="add-form" id="addForm">
+                <input id="nameInput" type="text" placeholder="Name (optional)" />
                 <input id="urlInput" type="text" placeholder="https://example.com" />
                 <div class="row">
                     <button class="ok" id="okBtn">Add</button>
@@ -181,12 +192,15 @@
     const toolsEl = document.getElementById('tools');
     const addBtn = document.getElementById('addBtn');
     const addForm = document.getElementById('addForm');
+    const nameInput = document.getElementById('nameInput');
     const urlInput = document.getElementById('urlInput');
     const okBtn = document.getElementById('okBtn');
     const cancelBtn = document.getElementById('cancelBtn');
 
-    let webTools = [];
+    let webTools = [];      // open tabs: [{ key, name, bookmarkId }]
+    let bookmarksList = []; // persistent shortcuts: [{ id, name, url }]
     let activeKey = null;
+    let editingId = null;   // set while the inline form edits an existing bookmark
 
     function normalizeUrl(u) {
         u = (u || '').trim();
@@ -197,11 +211,44 @@
 
     function render() {
         toolsEl.innerHTML = '';
+        // Bookmarks first: persistent shortcuts, highlighted when their tab is the active one.
+        // Clicking opens (or focuses) the tab; the × on hover closes only the tab, not the bookmark.
+        for (const bm of bookmarksList) {
+            const tab = webTools.find(t => t.bookmarkId === bm.id);
+            const btn = document.createElement('button');
+            btn.className = 'tool-btn bm' + (tab && tab.key === activeKey ? ' active' : '');
+            btn.title = bm.name + '\n' + bm.url;
+            const label = document.createElement('span');
+            label.className = 'label';
+            label.textContent = bm.name;
+            btn.appendChild(label);
+            if (tab) {
+                const x = document.createElement('span');
+                x.className = 'x';
+                x.textContent = '×';
+                x.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    window.toolbarAPI.closeWebTool(tab.key);
+                });
+                btn.appendChild(x);
+            }
+            btn.addEventListener('click', () => window.toolbarAPI.openBookmark(bm.id));
+            btn.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                window.toolbarAPI.showCtxPopup('bookmark', bm.id, Math.round(e.clientX), Math.round(e.clientY));
+            });
+            toolsEl.appendChild(btn);
+        }
+        // Ad-hoc tabs (opened from target=_blank links etc.): transient, always closable,
+        // and convertible into bookmarks from their context menu.
         for (const t of webTools) {
+            if (t.bookmarkId) continue;
             const btn = document.createElement('button');
             btn.className = 'tool-btn' + (t.key === activeKey ? ' active' : '');
-            btn.title = t.name + '\n' + t.url;
+            btn.title = t.name;
             const label = document.createElement('span');
+            label.className = 'label';
             label.textContent = t.name;
             const x = document.createElement('span');
             x.className = 'x';
@@ -213,6 +260,11 @@
             btn.appendChild(label);
             btn.appendChild(x);
             btn.addEventListener('click', () => window.toolbarAPI.switchWebTool(t.key));
+            btn.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                window.toolbarAPI.showCtxPopup('tool', t.key, Math.round(e.clientX), Math.round(e.clientY));
+            });
             toolsEl.appendChild(btn);
         }
     }
@@ -243,7 +295,13 @@
     });
 
     window.toolbarAPI.onWebTools((list) => { webTools = list || []; render(); });
+    window.toolbarAPI.onBookmarks((list) => { bookmarksList = list || []; render(); });
     window.toolbarAPI.onActiveWebTool((key) => { activeKey = key; render(); });
+    // Main process asks to edit a bookmark (from its context menu): prefill the inline form
+    window.toolbarAPI.onBookmarkEdit((id, name, url) => {
+        if (addForm.classList.contains('show')) return;
+        showForm(id, name, url);
+    });
     window.toolbarAPI.onThemeChanged((theme) => {
         document.documentElement.classList.toggle('light', theme === 'light');
     });
@@ -252,14 +310,19 @@
     let currentLang = 'en';
     const L10N = {
         add: { en: 'Add', zh: '添加' },
+        save: { en: 'Save', zh: '保存' },
         cancel: { en: 'Cancel', zh: '取消' },
-        addTitle: { en: 'Add web tool', zh: '添加网页工具' },
+        addTitle: { en: 'Add bookmark', zh: '添加书签' },
+        namePh: { en: 'Name (optional)', zh: '名称（可选）' },
+        urlPh: { en: 'https://example.com', zh: 'https://example.com' },
     };
     function applyLang(lang) {
         currentLang = lang === 'zh' ? 'zh' : 'en';
-        okBtn.textContent = L10N.add[currentLang];
+        okBtn.textContent = (editingId ? L10N.save : L10N.add)[currentLang];
         cancelBtn.textContent = L10N.cancel[currentLang];
         addBtn.title = L10N.addTitle[currentLang];
+        nameInput.placeholder = L10N.namePh[currentLang];
+        urlInput.placeholder = L10N.urlPh[currentLang];
     }
     window.toolbarAPI.onLangChanged((lang) => applyLang(lang));
     applyLang(currentLang);
@@ -269,23 +332,48 @@
         document.body.style.setProperty('--sbw', (w || 220) + 'px');
     });
 
+    // Inline form doubles as "add bookmark" (+ button) and "edit bookmark" (context menu).
+    function showForm(id, name, url) {
+        editingId = id || null;
+        nameInput.value = name || '';
+        urlInput.value = url || '';
+        addForm.classList.add('show');
+        (editingId ? nameInput : urlInput).focus();
+    }
+    function hideForm() {
+        addForm.classList.remove('show');
+        editingId = null;
+        nameInput.value = '';
+        urlInput.value = '';
+    }
     addBtn.addEventListener('click', () => {
-        addForm.classList.toggle('show');
-        if (addForm.classList.contains('show')) urlInput.focus();
+        if (addForm.classList.contains('show')) hideForm();
+        else showForm(null, '', '');
     });
-    cancelBtn.addEventListener('click', () => { addForm.classList.remove('show'); urlInput.value = ''; });
+    cancelBtn.addEventListener('click', hideForm);
     okBtn.addEventListener('click', () => {
         const url = normalizeUrl(urlInput.value);
-        if (!url) return;
-        let name = url.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
-        window.toolbarAPI.addWebTool(url, name);
-        addForm.classList.remove('show');
-        urlInput.value = '';
+        const name = nameInput.value.trim();
+        if (editingId) {
+            if (url) window.toolbarAPI.updateBookmark(editingId, { name, url });
+        } else if (url) {
+            window.toolbarAPI.addBookmark(url, name);
+        }
+        hideForm();
     });
-    urlInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') okBtn.click();
-        if (e.key === 'Escape') cancelBtn.click();
+    [nameInput, urlInput].forEach((el) => {
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') okBtn.click();
+            if (e.key === 'Escape') hideForm();
+        });
     });
+    // Many bookmarks overflow the row: let the mouse wheel scroll it horizontally
+    toolsEl.addEventListener('wheel', (e) => {
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+            toolsEl.scrollLeft += e.deltaY;
+            e.preventDefault();
+        }
+    }, { passive: false });
 </script>
 </body>
 </html>

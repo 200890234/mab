@@ -43,14 +43,38 @@ let views = new Map();
 let currentViewKey = null;
 let seqCounter = 0;
 
-// Config: defines all AI tools
+// Toolbar bookmarks ("favorites"): persistent shortcuts shown in the top toolbar row, e.g.
+// daily check-in sites. A bookmark is NOT a tab — clicking one opens (or focuses) a tab backed
+// by a dedicated `bookmark_<id>` partition, so its login state survives closing the tab.
+let bookmarks = [];          // [{ id: 'bm-N', name, url }]
+let bookmarkSeq = 0;
+
+// Config: defines all AI tools. Key order = display order in the sidebar and in
+// File -> New Session. `customWeb` is intentionally last: it is not a real AI tool,
+// it is only the view definition reused by addWebTool() for arbitrary web pages,
+// so it is filtered out everywhere a "new session" can be created.
 const AI_TOOLS = {
+    chatgpt: {
+        name: 'ChatGPT',
+        url: 'https://chat.openai.com',
+        icon: 'GPT',
+        logo: 'assets/logos/chatgpt.png',
+        color: '#10A37F',
+        needsProxy: true
+    },
     gemini: {
         name: 'Gemini',
         url: 'https://gemini.google.com/app',
         icon: 'G',
         logo: 'assets/logos/gemini.png',
         color: '#4285F4',
+        needsProxy: true
+    },
+    claude: {
+        name: 'Claude',
+        url: 'https://claude.ai',
+        icon: 'C',
+        color: '#D97757',
         needsProxy: true
     },
     deepseek: {
@@ -61,41 +85,26 @@ const AI_TOOLS = {
         color: '#4D6BFE',
         needsProxy: false
     },
-    chatgpt: {
-        name: 'ChatGPT',
-        url: 'https://chat.openai.com',
-        icon: 'GPT',
-        logo: 'assets/logos/chatgpt.png',
-        color: '#10A37F',
-        needsProxy: true
-    },
-    doubao: {
-        name: '豆包',
-        url: 'https://www.doubao.com',
-        icon: '豆',
-        color: '#1E9AFF',
-        needsProxy: false
-    },
     qianwen: {
-        name: '千问',
+        name: 'Qwen',
         url: 'https://qianwen.com',
-        icon: '千',
+        icon: 'Q',
         color: '#FF6A00',
         needsProxy: false
     },
-    zhipu: {
-        name: '智谱清言',
-        url: 'https://chatglm.cn',
-        icon: '智',
-        color: '#4D6BFE',
+    doubao: {
+        name: 'Doubao',
+        url: 'https://www.doubao.com',
+        icon: 'D',
+        color: '#1E9AFF',
         needsProxy: false
     },
-    claude: {
-        name: 'Claude',
-        url: 'https://claude.ai',
-        icon: 'C',
-        color: '#D97757',
-        needsProxy: true
+    zhipu: {
+        name: 'ChatGLM',
+        url: 'https://chatglm.cn',
+        icon: 'GLM',
+        color: '#4D6BFE',
+        needsProxy: false
     },
     customWeb: {
         name: 'Web',
@@ -219,11 +228,28 @@ function loadState() {
         const webTools = Array.isArray(raw.webTools)
             ? raw.webTools.filter(w => w && typeof w.key === 'string' && typeof w.url === 'string')
             : [];
+        // Bookmarks are user data independent of open tabs; they must survive even when
+        // every tab is closed, so they are parsed before the allKeys bail-out below.
+        const bookmarks = Array.isArray(raw.bookmarks)
+            ? raw.bookmarks.filter(b => b && typeof b.id === 'string' && typeof b.name === 'string' && typeof b.url === 'string')
+            : [];
         const allKeys = [...sessions.map(s => s.key), ...webTools.map(w => w.key)];
-        if (allKeys.length === 0) return null;
+        if (allKeys.length === 0) {
+            if (bookmarks.length === 0) return null;
+            return {
+                sessions: [],
+                webTools: [],
+                bookmarks,
+                activeKey: null,
+                seqCounter: Number.isInteger(raw.seqCounter) ? raw.seqCounter : 0,
+                windowBounds: raw.windowBounds || null,
+                sidebarWidth: Number.isInteger(raw.sidebarWidth) ? raw.sidebarWidth : 220
+            };
+        }
         return {
             sessions,
             webTools,
+            bookmarks,
             activeKey: allKeys.includes(raw.activeKey) ? raw.activeKey : allKeys[0],
             seqCounter: Number.isInteger(raw.seqCounter) ? raw.seqCounter : 0,
             windowBounds: raw.windowBounds || null,
@@ -249,7 +275,7 @@ function saveState() {
     const webTools = [];
     for (const [key, entry] of views) {
         if (entry.toolKey === 'customWeb') {
-            webTools.push({ key, name: entry.name, url: getLiveURL(entry) });
+            webTools.push({ key, name: entry.name, url: getLiveURL(entry), bookmarkId: entry.bookmarkId || null });
         } else {
             sessions.push({ key, toolKey: entry.toolKey, name: entry.name, partition: entry.partition, url: getLiveURL(entry) });
         }
@@ -262,7 +288,8 @@ function saveState() {
         windowBounds,
         sidebarWidth,
         sessions,
-        webTools
+        webTools,
+        bookmarks
     };
 
     try {
@@ -1075,6 +1102,39 @@ function buildPopupMenu(type) {
     return Menu.buildFromTemplate(itemsToMenuTemplate(items));
 }
 
+// Native context menu for a toolbar bookmark (kind='bookmark') or an ad-hoc web-tool tab
+// (kind='tool'). Bookmark tabs show Edit/Remove; ad-hoc tabs can be converted into bookmarks.
+function showCtxPopup(kind, id, x, y) {
+    if (!mainWindow) return;
+    const isZh = appConfig.lang === 'zh';
+    const t = (en, zh) => (isZh ? zh : en);
+    let template = [];
+    if (kind === 'bookmark') {
+        const bm = bookmarks.find(b => b.id === id);
+        if (!bm) return;
+        const tabKey = findBookmarkTab(id);
+        template = [
+            tabKey
+                ? { label: t('Close Tab', '关闭标签'), click: () => closeWebTool(tabKey) }
+                : { label: t('Open', '打开'), click: () => openBookmark(id) },
+            { type: 'separator' },
+            { label: t('Edit…', '编辑…'), click: () => notifyToolbar('bookmark-edit', id, bm.name, bm.url) },
+            { type: 'separator' },
+            { label: t('Remove Bookmark', '移除书签'), click: () => removeBookmark(id) }
+        ];
+    } else {
+        const entry = views.get(id);
+        if (!entry || entry.toolKey !== 'customWeb') return;
+        const url = getLiveURL(entry) || entry.view.webContents.getURL() || '';
+        template = [
+            { label: t('Add to Bookmarks', '收藏'), click: () => addBookmark(url, entry.name) },
+            { type: 'separator' },
+            { label: t('Close Tab', '关闭标签'), click: () => closeWebTool(id) }
+        ];
+    }
+    Menu.buildFromTemplate(template).popup({ window: mainWindow, x, y });
+}
+
 // Right-click context menu (bound to a specific WebContentsView)
 function attachContextMenu(view) {
     const wc = view.webContents;
@@ -1480,28 +1540,33 @@ function closeSession(viewKey) {
 // ---------------- Custom web toolbar ----------------
 // Adds an arbitrary web page as a top-toolbar tab. These tabs live in the same `views` map as AI
 // sessions, so switching keeps them mounted and state is preserved; closing destroys the renderer.
-function addWebTool(url, title, { restore = null, activate = true, notify = true } = {}) {
+function addWebTool(url, title, { restore = null, activate = true, notify = true, bookmarkId = null, partitionName = null } = {}) {
     if (!mainWindow) return null;
 
     const viewKey = restore ? restore.key : `webtool-${++seqCounter}`;
-    const partitionName = `webtool_${viewKey}`;
+    // Bookmark tabs get a stable per-bookmark partition (`bookmark_<id>`) so their login state
+    // survives closing the tab — essential for daily check-in sites. Ad-hoc tabs keep the
+    // per-key partition as before (closing one orphans it, which cache cleanup collects).
+    const part = restore ? restore.partition : (partitionName || `webtool_${viewKey}`);
     // Use the supplied title when available; otherwise fall back to the host name (more
     // recognizable than a generic "Web"), and let the real page title take over once loaded.
     let name = restore ? restore.name : (title || hostFromUrl(url) || 'Web');
     const tool = AI_TOOLS.customWeb;
 
-    const view = createView(tool, partitionName, url || restore?.url || tool.url);
+    const view = createView(tool, part, url || restore?.url || tool.url);
     const entry = {
         view,
         toolKey: 'customWeb',
         name,
-        partition: partitionName
+        partition: part,
+        bookmarkId: restore ? (restore.bookmarkId || null) : bookmarkId
     };
     views.set(viewKey, entry);
 
-    // For freshly opened web tools (not restored), adopt the page's real title as the tab name
-    // once it loads, so the toolbar label reads e.g. "百度一下" instead of the raw host.
-    if (!restore) {
+    // For freshly opened ad-hoc web tools (not restored, not bookmarks), adopt the page's real
+    // title as the tab name once it loads, so the toolbar label reads e.g. "百度一下" instead of
+    // the raw host. Bookmark tabs keep the bookmark's own name so it never drifts on navigation.
+    if (!restore && !bookmarkId) {
         let titleAdopted = false;
         view.webContents.on('page-title-updated', (_e, pageTitle) => {
             if (titleAdopted) return;
@@ -1523,6 +1588,83 @@ function addWebTool(url, title, { restore = null, activate = true, notify = true
     if (activate) switchView(viewKey);
     if (notify) saveStateNow();
     return viewKey;
+}
+
+// ---------------- Toolbar bookmarks ("favorites") ----------------
+// Persistent shortcuts in the top toolbar (e.g. daily check-in sites). Clicking a bookmark
+// opens a tab in its dedicated `bookmark_<id>` partition, or focuses the already-open one.
+function findBookmarkTab(id) {
+    for (const [key, entry] of views) {
+        if (entry.toolKey === 'customWeb' && entry.bookmarkId === id) return key;
+    }
+    return null;
+}
+
+function syncBookmarks() {
+    notifyToolbar('bookmarks-sync', bookmarks);
+}
+
+function addBookmark(url, name, { activate = true } = {}) {
+    url = (url || '').trim();
+    if (!url || !mainWindow) return null;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    bookmarkSeq += 1;
+    const bm = { id: `bm-${bookmarkSeq}`, name: (name || '').trim() || hostFromUrl(url) || 'Web', url };
+    bookmarks.push(bm);
+    syncBookmarks();
+    openBookmark(bm.id, { activate });
+    return bm.id;
+}
+
+function updateBookmark(id, patch) {
+    const bm = bookmarks.find(b => b.id === id);
+    if (!bm) return;
+    if (patch && patch.name !== undefined) {
+        const n = String(patch.name).trim();
+        if (n) bm.name = n;
+    }
+    if (patch && patch.url !== undefined) {
+        let u = String(patch.url).trim();
+        if (u) {
+            if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+            bm.url = u;
+        }
+    }
+    // Keep the open tab's label in sync with the bookmark it belongs to
+    const tabKey = findBookmarkTab(id);
+    if (tabKey) {
+        const entry = views.get(tabKey);
+        entry.name = bm.name;
+        if (tabKey === currentViewKey) syncTitle();
+    }
+    syncBookmarks();
+    syncToolbar();
+    saveStateNow();
+}
+
+function removeBookmark(id) {
+    const idx = bookmarks.findIndex(b => b.id === id);
+    if (idx === -1) return;
+    bookmarks.splice(idx, 1);
+    // If its tab is open, detach it from the bookmark instead of killing it — the user can
+    // still close the tab like any ad-hoc one; nothing is lost either way.
+    const tabKey = findBookmarkTab(id);
+    if (tabKey) views.get(tabKey).bookmarkId = null;
+    syncBookmarks();
+    syncToolbar();
+    saveStateNow();
+}
+
+function openBookmark(id, { activate = true } = {}) {
+    const bm = bookmarks.find(b => b.id === id);
+    if (!bm || !mainWindow) return;
+    const existing = findBookmarkTab(id);
+    if (existing) {
+        if (activate) switchView(existing);
+        return;
+    }
+    // Dedicated stable partition: login state survives closing the tab.
+    addWebTool(bm.url, bm.name, { bookmarkId: id, partitionName: `bookmark_${id}`, activate });
 }
 
 function closeWebTool(viewKey) {
@@ -1553,7 +1695,7 @@ function syncToolbar() {
     const list = [];
     for (const [key, entry] of views) {
         if (entry.toolKey === 'customWeb') {
-            list.push({ key, name: entry.name });
+            list.push({ key, name: entry.name, bookmarkId: entry.bookmarkId || null });
         }
     }
     notifyToolbar('webtools-sync', list);
@@ -1599,6 +1741,11 @@ function getActivePartitions() {
         // Web-tool records only store their key; derive the partition the way addWebTool builds it
         for (const w of (Array.isArray(raw.webTools) ? raw.webTools : [])) {
             if (w && typeof w.key === 'string') active.add(`webtool_${w.key}`);
+        }
+        // Bookmark partitions hold the login state of the bookmarked sites even while their
+        // tab is closed — deleting one would log the user out of a daily-use site.
+        for (const b of (Array.isArray(raw.bookmarks) ? raw.bookmarks : [])) {
+            if (b && typeof b.id === 'string') active.add(`bookmark_${b.id}`);
         }
     } catch (e) { /* unreadable state file: fall back to the mounted views only */ }
     return active;
@@ -1864,6 +2011,12 @@ function createWindow() {
             if (saved) {
                 // Restore last tabs; seqCounter must be restored first to avoid new sessions colliding with old keys
                 seqCounter = saved.seqCounter;
+                // Restore toolbar bookmarks (user data, independent of open tabs)
+                bookmarks = Array.isArray(saved.bookmarks) ? saved.bookmarks : [];
+                bookmarkSeq = bookmarks.reduce((m, b) => {
+                    const n = parseInt(String(b.id || '').replace(/^bm-/, ''), 10);
+                    return Number.isFinite(n) && n > m ? n : m;
+                }, 0);
                 for (const s of saved.sessions) {
                     addSession(s.toolKey, { notify: false, activate: false, restore: s });
                 }
@@ -1887,16 +2040,21 @@ function createWindow() {
         }
         // Push the full state to the renderer in one shot (custom web tools live only in the top toolbar)
         notifyRenderer('state-sync', {
+            // customWeb is not exposed to the sidebar: creating it from there would open an
+            // about:blank page with no address bar. Real web pages are added via the toolbar's "+" only.
             tools: Object.fromEntries(
-                Object.entries(AI_TOOLS).map(([k, t]) => [k, { name: t.name, icon: t.icon, color: t.color, logo: t.logo || null }])
+                Object.entries(AI_TOOLS)
+                    .filter(([k]) => k !== 'customWeb')
+                    .map(([k, t]) => [k, { name: t.name, icon: t.icon, color: t.color, logo: t.logo || null }])
             ),
             views: [...views]
                 .filter(([key, entry]) => entry.toolKey !== 'customWeb')
                 .map(([key, entry]) => serializeView(key, entry)),
             activeKey: currentViewKey
         });
-        // Keep the top toolbar in sync with the restored web tools
+        // Keep the top toolbar in sync with the restored web tools and bookmarks
         syncToolbar();
+        syncBookmarks();
         // Push update availability so the sidebar can show its HTML badge
         pushUpdateInfo();
     });
@@ -1930,12 +2088,19 @@ app.whenReady().then(() => {
 // IPC communication
 ipcMain.on('switch-view', (_event, viewKey) => switchView(viewKey));
 ipcMain.on('open-external', (_event, url) => { if (url) shell.openExternal(url); });
-ipcMain.on('create-new-view', (_event, toolKey) => addSession(toolKey));
+// Guard: customWeb must never become a sidebar session (it would be an unusable blank page).
+ipcMain.on('create-new-view', (_event, toolKey) => { if (toolKey && toolKey !== 'customWeb') addSession(toolKey); });
 ipcMain.on('close-view', (_event, viewKey) => closeSession(viewKey));
 ipcMain.on('rename-view', (_event, viewKey, newName) => renameSession(viewKey, newName));
 ipcMain.on('reorder-view', (_event, fromKey, toKey, after) => reorderView(fromKey, toKey, !!after));
 // Top toolbar: arbitrary web pages
 ipcMain.on('add-webtool', (_event, url, name) => { addWebTool(url, name); });
+// Top toolbar bookmarks ("favorites")
+ipcMain.on('bookmark-open', (_event, id) => openBookmark(id));
+ipcMain.on('bookmark-add', (_event, url, name) => { addBookmark(url, name); });
+ipcMain.on('bookmark-update', (_event, id, patch) => { updateBookmark(id, patch || {}); });
+// Right-click context menu on a bookmark / ad-hoc toolbar tab
+ipcMain.on('show-ctx-popup', (_event, kind, id, x, y) => { showCtxPopup(kind, id, x, y); });
 ipcMain.on('switch-webtool', (_event, viewKey) => switchView(viewKey));
 ipcMain.on('close-webtool', (_event, viewKey) => closeWebTool(viewKey));
 ipcMain.on('sidebar-resize', (_event, width) => {
