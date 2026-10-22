@@ -470,6 +470,10 @@
                             <button class="mini-btn" id="btnCleanCache" data-i18n="clean">Clean</button>
                         </span>
                     </div>
+                    <!-- Manage the AI service list (services.json): add / rename / remove / reorder -->
+                    <div class="setting-row">
+                        <button class="mini-btn" id="btnEditTools" data-i18n="manage" style="flex:1;">Manage AI Services…</button>
+                    </div>
                     <!-- To add more settings later, append a .setting-row following this structure -->
                 </div>
             </div>
@@ -536,6 +540,7 @@
                 cache: 'Cache',
                 clean: 'Clean',
                 cleaning: 'Cleaning…',
+                manage: 'Manage AI Services…',
                 cacheCleaned: (size) => `Freed ${size}`,
                 cacheCleanFailed: 'Cache cleanup failed',
             },
@@ -552,6 +557,7 @@
                 cache: '缓存',
                 clean: '清理',
                 cleaning: '清理中…',
+                manage: '管理 AI 服务…',
                 cacheCleaned: (size) => `已释放 ${size}`,
                 cacheCleanFailed: '缓存清理失败',
             }
@@ -672,6 +678,11 @@
         const cacheSizeEl = document.getElementById('cacheSize');
         const cleanBtn = document.getElementById('btnCleanCache');
         let cacheBusy = false;
+
+        // Settings > AI Tools: open the management window
+        document.getElementById('btnEditTools').addEventListener('click', () => {
+            try { window.electronAPI.openTools(); } catch (e) {}
+        });
 
         function formatSize(bytes) {
             const n = Number(bytes) || 0;

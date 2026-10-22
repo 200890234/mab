@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+    :root {
+        --bg: #1e1e1e;
+        --panel: #252526;
+        --text: #d7d7d7;
+        --text-dim: #8a8a8a;
+        --border: #333;
+        --hover: #3a3a3a;
+        --accent: #4a90d9;
+        --danger: #ff6b6b;
+    }
+    html.light {
+        --bg: #ECEFF4;
+        --panel: #f5f6f8;
+        --text: #2a2a2a;
+        --text-dim: #7a828c;
+        --border: #d0d6dd;
+        --hover: #dde3ea;
+        --accent: #2f6fb0;
+        --danger: #d94f4f;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+        font-size: 12px;
+        user-select: none;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .head {
+        padding: 12px 14px 6px;
+        flex-shrink: 0;
+    }
+    .head-line { display: flex; align-items: center; gap: 8px; }
+    .head h1 { margin: 0; font-size: 14px; flex: 1; }
+    .head .hint { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+    .head-btns { display: flex; gap: 4px; }
+    .mini {
+        height: 20px;
+        padding: 0 8px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 10px;
+    }
+    .mini:hover { background: var(--hover); }
+
+    /* Add form */
+    .add-row {
+        display: flex;
+        gap: 6px;
+        padding: 8px 14px;
+        flex-shrink: 0;
+    }
+    .add-row input {
+        height: 24px;
+        padding: 0 6px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        font-size: 12px;
+        outline: none;
+    }
+    .add-row input[name-input] { flex: 0 0 130px; }
+    .add-row input[url-input] { flex: 1 1 auto; min-width: 0; }
+    .add-row button {
+        height: 24px;
+        padding: 0 10px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 11px;
+        flex-shrink: 0;
+    }
+    .add-row .ok { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* Tool list */
+    .list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 4px 8px 10px;
+    }
+    .tool-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        margin-bottom: 2px;
+    }
+    .tool-row:hover { background: var(--hover); }
+    .tool-row.dragging { opacity: 0.4; }
+    .tool-row.drop-hint { border-color: var(--accent); }
+    .tool-row.editing { background: var(--hover); }
+
+    .badge {
+        width: 22px; height: 22px;
+        display: inline-flex; align-items: center; justify-content: center;
+        border-radius: 5px;
+        color: #fff;
+        font-size: 11px;
+        font-weight: 600;
+        flex-shrink: 0;
+    }
+    .tool-main { flex: 1; min-width: 0; }
+    .tool-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tool-url { color: var(--text-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .usage { color: var(--accent); font-size: 10px; margin-left: 6px; white-space: nowrap; }
+
+    .row-btns { display: flex; gap: 4px; flex-shrink: 0; }
+    .row-btns button {
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 11px;
+    }
+    .row-btns button:hover { background: var(--border); }
+    .row-btns .del:hover { color: var(--danger); border-color: var(--danger); }
+
+    /* Inline edit mode */
+    .edit-fields { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+    .edit-fields input {
+        height: 20px;
+        padding: 0 6px;
+        border-radius: 3px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+        font-size: 12px;
+        outline: none;
+    }
+
+    .foot {
+        padding: 6px 14px 10px;
+        color: var(--text-dim);
+        font-size: 10px;
+        flex-shrink: 0;
+    }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+    <div class="head">
+        <div class="head-line">
+            <h1 data-i18n="title">Manage AI Services</h1>
+            <span class="head-btns">
+                <button class="mini" id="btnOpenJson" data-i18n="openJson">Open JSON</button>
+                <button class="mini" id="btnShowJson" data-i18n="showFolder">Show in Folder</button>
+            </span>
+        </div>
+        <div class="hint" data-i18n="subtitle">Shown in the sidebar and in File &gt; New Session. Drag rows to reorder.</div>
+    </div>
+    <div class="add-row">
+        <input name-input id="addName" data-i18n-ph="namePh" placeholder="Name" />
+        <input url-input id="addUrl" data-i18n-ph="urlPh" placeholder="https://example.com" />
+        <button class="ok" id="addBtn" data-i18n="add">Add</button>
+    </div>
+    <div class="list" id="list"></div>
+    <div class="foot" data-i18n="footHint">Changes apply immediately. Changing a URL may require signing in again; removing a tool keeps its login data on disk.</div>
+
+<script>
+    let tools = [];
+    let usage = {};
+    let editingKey = null;
+    let dragKey = null;
+    let lang = 'en';
+
+    const listEl = document.getElementById('list');
+    const addNameEl = document.getElementById('addName');
+    const addUrlEl = document.getElementById('addUrl');
+
+    const L10N = {
+        title:        { en: 'Manage AI Services', zh: '管理 AI 服务' },
+        openJson:     { en: 'Open JSON', zh: '打开 JSON' },
+        showFolder:   { en: 'Show in Folder', zh: '所在文件夹' },
+        subtitle:     { en: 'Shown in the sidebar and in File > New Session. Drag rows to reorder.', zh: '显示在左侧列表和「文件 > 新建会话」菜单中。拖动行可调整顺序。' },
+        add:          { en: 'Add', zh: '添加' },
+        namePh:       { en: 'Name', zh: '名称' },
+        urlPh:        { en: 'https://example.com', zh: 'https://example.com' },
+        edit:         { en: 'Edit', zh: '编辑' },
+        save:         { en: 'Save', zh: '保存' },
+        cancel:       { en: 'Cancel', zh: '取消' },
+        remove:       { en: 'Remove', zh: '移除' },
+        footHint:     { en: 'Changes apply immediately. Changing a URL may require signing in again; removing a tool keeps its login data on disk.', zh: '更改立即生效。修改网址可能需要重新登录；移除工具不会删除磁盘上的登录数据。' },
+        sessions:     { en: (n) => `${n} session${n === 1 ? '' : 's'}`, zh: (n) => `${n} 个会话` },
+        errName:      { en: 'Please enter a name.', zh: '请输入名称。' },
+        errUrl:       { en: 'Please enter a valid URL.', zh: '请输入有效的网址。' }
+    };
+    const t = (key) => (L10N[key] && (typeof L10N[key][lang] !== 'undefined' ? L10N[key][lang] : L10N[key].en)) || key;
+
+    function applyI18n() {
+        document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+        document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.getAttribute('data-i18n')); });
+        document.querySelectorAll('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.getAttribute('data-i18n-ph')); });
+        render();
+    }
+
+    function normalizeUrl(u) {
+        u = (u || '').trim();
+        if (!u) return '';
+        if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+        return u;
+    }
+
+    function render() {
+        listEl.innerHTML = '';
+        for (const tool of tools) {
+            listEl.appendChild(tool.key === editingKey ? buildEditRow(tool) : buildRow(tool));
+        }
+    }
+
+    function badgeEl(tool) {
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.style.background = tool.color || '#4A90D9';
+        const icon = tool.icon || (tool.name || '?')[0].toUpperCase();
+        badge.textContent = icon;
+        badge.style.fontSize = icon.length >= 3 ? '8px' : '11px';
+        return badge;
+    }
+
+    function buildRow(tool) {
+        const row = document.createElement('div');
+        row.className = 'tool-row';
+        row.appendChild(badgeEl(tool));
+
+        const main = document.createElement('div');
+        main.className = 'tool-main';
+        const nm = document.createElement('div');
+        nm.className = 'tool-name';
+        nm.textContent = tool.name;
+        const ur = document.createElement('div');
+        ur.className = 'tool-url';
+        ur.textContent = tool.url;
+        main.appendChild(nm);
+        main.appendChild(ur);
+        const n = usage[tool.key] || 0;
+        if (n > 0) {
+            const u = document.createElement('span');
+            u.className = 'usage';
+            u.textContent = t('sessions')(n);
+            main.appendChild(u);
+        }
+        row.appendChild(main);
+
+        const btns = document.createElement('div');
+        btns.className = 'row-btns';
+        const editBtn = document.createElement('button');
+        editBtn.textContent = t('edit');
+        editBtn.addEventListener('click', () => { editingKey = tool.key; render(); });
+        const delBtn = document.createElement('button');
+        delBtn.className = 'del';
+        delBtn.textContent = t('remove');
+        delBtn.addEventListener('click', async () => {
+            await window.toolsAPI.removeTool(tool.key);
+            await reload();
+        });
+        btns.appendChild(editBtn);
+        btns.appendChild(delBtn);
+        row.appendChild(btns);
+
+        // Drag to reorder (drop onto another row to take its slot)
+        row.draggable = true;
+        row.addEventListener('dragstart', () => { dragKey = tool.key; row.classList.add('dragging'); });
+        row.addEventListener('dragend', () => {
+            dragKey = null;
+            row.classList.remove('dragging');
+            listEl.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'));
+        });
+        row.addEventListener('dragover', (e) => {
+            if (!dragKey || dragKey === tool.key) return;
+            e.preventDefault();
+            row.classList.add('drop-hint');
+        });
+        row.addEventListener('dragleave', (e) => {
+            if (e.relatedTarget && row.contains(e.relatedTarget)) return;
+            row.classList.remove('drop-hint');
+        });
+        row.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            row.classList.remove('drop-hint');
+            if (dragKey && dragKey !== tool.key) {
+                await window.toolsAPI.reorderTool(dragKey, tool.key);
+                await reload();
+            }
+            dragKey = null;
+        });
+        return row;
+    }
+
+    function buildEditRow(tool) {
+        const row = document.createElement('div');
+        row.className = 'tool-row editing';
+        row.appendChild(badgeEl(tool));
+
+        const fields = document.createElement('div');
+        fields.className = 'edit-fields';
+        const nameIn = document.createElement('input');
+        nameIn.value = tool.name;
+        nameIn.placeholder = t('namePh');
+        const urlIn = document.createElement('input');
+        urlIn.value = tool.url;
+        urlIn.placeholder = t('urlPh');
+        fields.appendChild(nameIn);
+        fields.appendChild(urlIn);
+        row.appendChild(fields);
+
+        const btns = document.createElement('div');
+        btns.className = 'row-btns';
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = t('save');
+        saveBtn.addEventListener('click', async () => {
+            const r = await window.toolsAPI.updateTool(tool.key, { name: nameIn.value, url: normalizeUrl(urlIn.value) });
+            if (!r.ok && r.error === 'url') { urlIn.focus(); return; }
+            if (!r.ok && r.error === 'name') { nameIn.focus(); return; }
+            editingKey = null;
+            await reload();
+        });
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = t('cancel');
+        cancelBtn.addEventListener('click', () => { editingKey = null; render(); });
+        btns.appendChild(saveBtn);
+        btns.appendChild(cancelBtn);
+        row.appendChild(btns);
+
+        const submitOnEnter = (e) => { if (e.key === 'Enter') saveBtn.click(); if (e.key === 'Escape') cancelBtn.click(); };
+        nameIn.addEventListener('keydown', submitOnEnter);
+        urlIn.addEventListener('keydown', submitOnEnter);
+        return row;
+    }
+
+    async function reload() {
+        const data = await window.toolsAPI.getTools();
+        tools = (data && data.tools) || [];
+        usage = (data && data.usage) || {};
+        render();
+    }
+
+    document.getElementById('addBtn').addEventListener('click', async () => {
+        const name = addNameEl.value.trim();
+        const url = normalizeUrl(addUrlEl.value);
+        if (!name) { addNameEl.focus(); return; }
+        if (!url) { addUrlEl.focus(); return; }
+        const r = await window.toolsAPI.addTool(name, url);
+        if (r.ok) {
+            addNameEl.value = '';
+            addUrlEl.value = '';
+            await reload();
+        } else if (r.error === 'url') {
+            addUrlEl.focus();
+        } else {
+            addNameEl.focus();
+        }
+    });
+    [addNameEl, addUrlEl].forEach(el => el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') document.getElementById('addBtn').click();
+    }));
+
+    window.toolsAPI.onThemeChanged((theme) => {
+        document.documentElement.classList.toggle('light', theme === 'light');
+    });
+    window.toolsAPI.onLangChanged((l) => { lang = l === 'zh' ? 'zh' : 'en'; applyI18n(); });
+    // tools.json was edited externally: reload the list (and leave edit mode to avoid clobbering)
+    window.toolsAPI.onExternalReload(() => { editingKey = null; reload(); });
+
+    document.getElementById('btnOpenJson').addEventListener('click', () => window.toolsAPI.openJsonFile(false));
+    document.getElementById('btnShowJson').addEventListener('click', () => window.toolsAPI.openJsonFile(true));
+
+    applyI18n();
+    reload();
+</script>
+</body>
+</html>

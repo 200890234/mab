@@ -49,70 +49,212 @@ let seqCounter = 0;
 let bookmarks = [];          // [{ id: 'bm-N', name, url }]
 let bookmarkSeq = 0;
 
-// Config: defines all AI tools. Key order = display order in the sidebar and in
-// File -> New Session. `customWeb` is intentionally last: it is not a real AI tool,
-// it is only the view definition reused by addWebTool() for arbitrary web pages,
-// so it is filtered out everywhere a "new session" can be created.
-const AI_TOOLS = {
-    chatgpt: {
-        name: 'ChatGPT',
-        url: 'https://chat.openai.com',
-        icon: 'GPT',
-        logo: 'assets/logos/chatgpt.png',
-        color: '#10A37F',
-        needsProxy: true
-    },
-    gemini: {
-        name: 'Gemini',
-        url: 'https://gemini.google.com/app',
-        icon: 'G',
-        logo: 'assets/logos/gemini.png',
-        color: '#4285F4',
-        needsProxy: true
-    },
-    claude: {
-        name: 'Claude',
-        url: 'https://claude.ai',
-        icon: 'C',
-        color: '#D97757',
-        needsProxy: true
-    },
-    deepseek: {
-        name: 'DeepSeek',
-        url: 'https://chat.deepseek.com',
-        icon: 'DS',
-        logo: 'assets/logos/deepseek.png',
-        color: '#4D6BFE',
-        needsProxy: false
-    },
-    qianwen: {
-        name: 'Qwen',
-        url: 'https://qianwen.com',
-        icon: 'Q',
-        color: '#FF6A00',
-        needsProxy: false
-    },
-    doubao: {
-        name: 'Doubao',
-        url: 'https://www.doubao.com',
-        icon: 'D',
-        color: '#1E9AFF',
-        needsProxy: false
-    },
-    zhipu: {
-        name: 'ChatGLM',
-        url: 'https://chatglm.cn',
-        icon: 'GLM',
-        color: '#4D6BFE',
-        needsProxy: false
-    },
-    customWeb: {
-        name: 'Web',
-        url: 'about:blank',
-        icon: '🌐',
-        color: '#888888'
+// ---------------- AI service configuration (user-editable, stored in services.json) ----------------
+// The service list lives in services.json inside the userData dir and is the single source of
+// truth: the sidebar, the File -> New Session menu and per-service login partitions are all
+// derived from it. DEFAULT_SERVICES only seeds the file on first launch (or when the file is
+// missing/corrupt/empty). Array order = display order. `customWeb` stays code-defined:
+// it is not a real AI tool, only the view definition reused by addWebTool() for web pages.
+const DEFAULT_SERVICES = [
+    { key: 'chatgpt', name: 'ChatGPT', url: 'https://chat.openai.com', icon: 'GPT', logo: 'assets/logos/chatgpt.png', color: '#10A37F' },
+    { key: 'gemini', name: 'Gemini', url: 'https://gemini.google.com/app', icon: 'G', logo: 'assets/logos/gemini.png', color: '#4285F4' },
+    { key: 'claude', name: 'Claude', url: 'https://claude.ai', icon: 'C', logo: null, color: '#D97757' },
+    { key: 'deepseek', name: 'DeepSeek', url: 'https://chat.deepseek.com', icon: 'DS', logo: 'assets/logos/deepseek.png', color: '#4D6BFE' },
+    { key: 'qianwen', name: 'Qwen', url: 'https://qianwen.com', icon: 'Q', logo: null, color: '#FF6A00' },
+    { key: 'doubao', name: 'Doubao', url: 'https://www.doubao.com', icon: 'D', logo: null, color: '#1E9AFF' },
+    { key: 'zhipu', name: 'ChatGLM', url: 'https://chatglm.cn', icon: 'GLM', logo: null, color: '#4D6BFE' }
+];
+const TOOL_COLORS = ['#4A90D9', '#7C6BD9', '#3BA55D', '#D97B6C', '#D9A84A', '#4AA8B8', '#8B6BC7'];
+
+let servicesList = [];   // [{ key, name, url, icon, logo, color }] in display order
+let AI_TOOLS = {};    // key -> tool, rebuilt from servicesList; always also contains customWeb
+
+function rebuildToolMap() {
+    AI_TOOLS = {};
+    for (const t of servicesList) AI_TOOLS[t.key] = t;
+    AI_TOOLS.customWeb = { name: 'Web', url: 'about:blank', icon: '🌐', color: '#888888' };
+}
+
+const SERVICES_FILE = () => path.join(getUserDataDir(), 'services.json');
+
+// Load a service list from the given file (defaults to services.json); returns null when the
+// file is missing, corrupt or empty so the caller can seed DEFAULT_SERVICES. Invalid entries
+// are dropped, duplicate keys de-duplicated.
+function loadServicesFile(file) {
+    try {
+        const raw = JSON.parse(fs.readFileSync(file || SERVICES_FILE(), 'utf8'));
+        if (!Array.isArray(raw)) return null;
+        const seen = new Set();
+        const list = [];
+        for (const t of raw) {
+            if (!t || typeof t.key !== 'string' || !t.key.trim() || t.key === 'customWeb') continue;
+            if (typeof t.name !== 'string' || !t.name.trim()) continue;
+            if (typeof t.url !== 'string' || !/^https?:\/\//i.test(t.url)) continue;
+            if (seen.has(t.key)) continue;
+            seen.add(t.key);
+            list.push({
+                key: t.key,
+                name: t.name.trim(),
+                url: t.url,
+                icon: typeof t.icon === 'string' && t.icon ? t.icon : null,
+                logo: typeof t.logo === 'string' && t.logo ? t.logo : null,
+                color: typeof t.color === 'string' && t.color ? t.color : TOOL_COLORS[0]
+            });
+        }
+        return list.length ? list : null;
+    } catch (e) {
+        return null; // missing or unreadable: seed defaults
     }
-};
+}
+
+function writeServicesJson(list) {
+    const file = SERVICES_FILE();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // tmp + rename, the same atomic pattern as sessions.json
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(list, null, 2), 'utf8');
+    fs.renameSync(tmp, file);
+}
+
+function saveServices() {
+    try { writeServicesJson(servicesList); } catch (e) { console.error('[tools] save failed:', e); }
+}
+
+// Called once at startup (app ready): load the user's list or seed the default one.
+// Migration: the feature briefly shipped with the config stored as tools.json — if
+// services.json does not exist yet but tools.json does, carry its contents over.
+function initServices() {
+    servicesList = loadServicesFile();
+    if (!servicesList) {
+        const legacyFile = path.join(getUserDataDir(), 'tools.json');
+        if (fs.existsSync(legacyFile)) {
+            servicesList = loadServicesFile(legacyFile);
+            if (servicesList) saveServices(); // migrate to the new file name
+        }
+    }
+    if (!servicesList) {
+        servicesList = DEFAULT_SERVICES.map(t => ({ ...t }));
+        saveServices(); // seed the file only when needed
+    }
+    rebuildToolMap();
+    watchServicesFile();
+}
+
+// Advanced users may edit services.json directly. Watch it so external edits apply live:
+// on change the list is reloaded, the tool map rebuilt and the sidebar refreshed.
+let toolsWatcher = null;
+let toolsWatchTimer = null;
+function watchServicesFile() {
+    if (toolsWatcher) return;
+    try {
+        toolsWatcher = fs.watch(SERVICES_FILE(), () => {
+            clearTimeout(toolsWatchTimer); // editors often write in bursts
+            toolsWatchTimer = setTimeout(() => {
+                const fresh = loadServicesFile();
+                if (fresh) {
+                    servicesList = fresh;
+                    rebuildToolMap();
+                    refreshSidebarState();
+                    if (toolsWin && !toolsWin.isDestroyed()) {
+                        try { toolsWin.webContents.send('tools-external-reload'); } catch (e) {}
+                    }
+                }
+            }, 300);
+        });
+        toolsWatcher.on('error', () => { toolsWatcher = null; });
+    } catch (e) { /* file may not exist yet; not critical */ }
+}
+
+// Open services.json in the system editor (falls back to showing it in Explorer when no
+// editor is associated), or reveal it in Explorer directly.
+function openServicesJsonFile(inFolder) {
+    if (!fs.existsSync(SERVICES_FILE())) saveServices();
+    if (inFolder) {
+        shell.showItemInFolder(SERVICES_FILE());
+        return;
+    }
+    shell.openPath(SERVICES_FILE()).then((err) => {
+        if (err) shell.showItemInFolder(SERVICES_FILE());
+    }).catch(() => shell.showItemInFolder(SERVICES_FILE()));
+}
+
+// Add a new custom tool; returns { ok, error?, key? }.
+function addCustomTool(name, url) {
+    const n = String(name || '').trim();
+    let u = String(url || '').trim();
+    if (!n) return { ok: false, error: 'name' };
+    if (!u) return { ok: false, error: 'url' };
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    try { new URL(u); } catch (e) { return { ok: false, error: 'url' }; }
+    let n2 = 1;
+    while (servicesList.some(t => t.key === `tool-${n2}`)) n2++;
+    const tool = {
+        key: `tool-${n2}`,
+        name: n,
+        url: u,
+        icon: null,
+        logo: null,
+        color: TOOL_COLORS[servicesList.length % TOOL_COLORS.length]
+    };
+    servicesList.push(tool);
+    rebuildToolMap();
+    saveServices();
+    return { ok: true, key: tool.key };
+}
+
+// Update name/url of an existing tool; returns { ok, error? }.
+function updateCustomTool(key, patch) {
+    const t = servicesList.find(x => x.key === key);
+    if (!t) return { ok: false, error: 'notfound' };
+    if (patch && typeof patch.name === 'string' && patch.name.trim()) t.name = patch.name.trim();
+    if (patch && typeof patch.url === 'string' && patch.url.trim()) {
+        let u = patch.url.trim();
+        if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+        try { new URL(u); } catch (e) { return { ok: false, error: 'url' }; }
+        t.url = u;
+    }
+    rebuildToolMap();
+    saveServices();
+    return { ok: true };
+}
+
+// Remove a tool. When sessions of it are open, a confirmation dialog is shown first:
+// their tabs disappear on the next launch (login data stays on disk, cleanable in Settings).
+// Returns { ok, cancelled?, error? }.
+function removeCustomTool(key) {
+    const idx = servicesList.findIndex(t => t.key === key);
+    if (idx === -1) return { ok: false, error: 'notfound' };
+    const openCount = [...views.values()].filter(e => e.toolKey === key).length;
+    if (openCount > 0 && mainWindow && !mainWindow.isDestroyed()) {
+        const t = servicesList[idx];
+        // showMessageBoxSync returns the button index (a plain number, NOT an object)
+        const choice = dialog.showMessageBoxSync(mainWindow, {
+            type: 'warning',
+            buttons: ['Remove', 'Cancel'],
+            defaultId: 1,
+            cancelId: 1,
+            message: `Remove "${t.name}"?`,
+            detail: `${openCount} open session(s) use this tool. Their tabs will disappear on the next launch. Login data stays on disk and can be cleaned up in Settings > Cache.`
+        });
+        if (choice !== 0) return { ok: false, cancelled: true };
+    }
+    servicesList.splice(idx, 1);
+    rebuildToolMap();
+    saveServices();
+    return { ok: true };
+}
+
+// Reorder: move `fromKey` onto `toKey`'s slot (drag & drop from the management window).
+function reorderCustomTool(fromKey, toKey) {
+    const from = servicesList.findIndex(t => t.key === fromKey);
+    const to = servicesList.findIndex(t => t.key === toKey);
+    if (from === -1 || to === -1 || from === to) return { ok: false };
+    const [t] = servicesList.splice(from, 1);
+    servicesList.splice(to, 0, t);
+    rebuildToolMap();
+    saveServices();
+    return { ok: true };
+}
 
 // Initial default sessions (used only on first launch with no history)
 const DEFAULT_SESSIONS = ['gemini', 'gemini', 'deepseek'];
@@ -181,6 +323,10 @@ function applyTheme(theme) {
     // Keep the pronunciation panel in sync with the app theme
     if (pronWin && !pronWin.isDestroyed()) {
         try { pronWin.webContents.send('theme-changed', theme); } catch (e) {}
+    }
+    // Keep the AI tools management window in sync with the app theme
+    if (toolsWin && !toolsWin.isDestroyed()) {
+        try { toolsWin.webContents.send('theme-changed', theme); } catch (e) {}
     }
 }
 
@@ -894,8 +1040,8 @@ function showAboutDialog() {
         title: isZh ? '关于 MAB' : 'About MAB',
         message: isZh ? 'Mervyn 的 AI 浏览器' : "Mervyn's AI Browser",
         detail: isZh
-            ? `版本 ${version}\n\n基于 Electron 构建的多会话 AI 浏览器，可并排打开 Gemini、DeepSeek、ChatGPT、豆包、千问、智谱清言、Claude 等，每个会话相互独立并保留登录态。\n\n© 2026 Mervyn`
-            : `Version ${version}\n\nA multi-session AI browser built with Electron. Open Gemini, DeepSeek, ChatGPT, Doubao, Qwen, Zhipu AI, and Claude side by side in isolated, persistent sessions.\n\n© 2026 Mervyn`,
+            ? `版本 ${version}\n\n基于 Electron 构建的多会话 AI 浏览器，可并排打开 ${servicesList.map(t => t.name).join('、')} 等，每个会话相互独立并保留登录态。\n\n© 2026 Mervyn`
+            : `Version ${version}\n\nA multi-session AI browser built with Electron. Open ${servicesList.map(t => t.name).join(', ')} side by side in isolated, persistent sessions.\n\n© 2026 Mervyn`,
         buttons: [isZh ? '确定' : 'OK'],
         icon: ico,
         noLink: true
@@ -1022,6 +1168,10 @@ function getMenuItems() {
             action: 'close-current',
             disabled: !currentViewKey
         },
+        {
+            label: t('Open services.json', '打开 services.json 配置文件'),
+            action: 'open-services-json'
+        },
         { separator: true },
         { label: t('Quit', '退出'), action: 'quit' }
     ];
@@ -1057,6 +1207,7 @@ function runMenuAction(action, arg) {
     const wc = getActiveWebContents();
     switch (action) {
         case 'new-session': if (arg) addSession(arg); break;
+        case 'open-services-json': openServicesJsonFile(false); break;
         case 'close-current': {
             const entry = currentViewKey && views.get(currentViewKey);
             if (entry) {
@@ -1721,6 +1872,58 @@ function syncToolbar() {
     notifyToolbar('webtool-active', currentViewKey);
 }
 
+// ---------------- AI tools management window (Settings > AI Tools > Manage) ----------------
+let toolsWin = null;
+function openToolsWindow() {
+    if (toolsWin && !toolsWin.isDestroyed()) { toolsWin.focus(); return; }
+    toolsWin = new BrowserWindow({
+        width: 560,
+        height: 540,
+        title: 'Manage AI Services',
+        autoHideMenuBar: true,
+        webPreferences: {
+            preload: path.join(__dirname, 'tools-preload.js'),
+            nodeIntegration: false,
+            contextIsolation: true
+        }
+    });
+    toolsWin.setBackgroundColor(appConfig.theme === 'light' ? '#ECEFF4' : '#1e1e1e');
+    toolsWin.loadFile(path.join(__dirname, 'tools.html'));
+    toolsWin.on('closed', () => { toolsWin = null; });
+    toolsWin.webContents.on('did-finish-load', () => {
+        if (toolsWin && !toolsWin.isDestroyed()) {
+            try { toolsWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+            try { toolsWin.webContents.send('lang-changed', appConfig.lang); } catch (e) {}
+        }
+    });
+}
+
+// One-shot state payload for the sidebar (tool list + open sessions + active key).
+// `customWeb` is not exposed: web pages are added via the toolbar "+" only. The sidebar
+// badge falls back to the tool's initial when no icon is defined (custom tools).
+function sidebarStatePayload() {
+    return {
+        tools: Object.fromEntries(
+            Object.entries(AI_TOOLS)
+                .filter(([k]) => k !== 'customWeb')
+                .map(([k, t]) => [k, {
+                    name: t.name,
+                    icon: t.icon || (t.name || '?')[0].toUpperCase(),
+                    color: t.color,
+                    logo: t.logo || null
+                }])
+        ),
+        views: [...views]
+            .filter(([key, entry]) => entry.toolKey !== 'customWeb')
+            .map(([key, entry]) => serializeView(key, entry)),
+        activeKey: currentViewKey
+    };
+}
+
+function refreshSidebarState() {
+    notifyRenderer('state-sync', sidebarStatePayload());
+}
+
 function clearPartitionData(partitionName) {
     try {
         const ses = session.fromPartition(`persist:${partitionName}`);
@@ -2017,6 +2220,9 @@ function createWindow() {
         toolbarView = null;
         views.clear();
         currentViewKey = null;
+        // Don't keep the app alive just for the tools window after the main window is gone
+        if (toolsWin && !toolsWin.isDestroyed()) toolsWin.destroy();
+        toolsWin = null;
     });
 
     // Wait until the sidebar is ready before creating sessions, so the UI can receive events
@@ -2058,19 +2264,7 @@ function createWindow() {
             }
         }
         // Push the full state to the renderer in one shot (custom web tools live only in the top toolbar)
-        notifyRenderer('state-sync', {
-            // customWeb is not exposed to the sidebar: creating it from there would open an
-            // about:blank page with no address bar. Real web pages are added via the toolbar's "+" only.
-            tools: Object.fromEntries(
-                Object.entries(AI_TOOLS)
-                    .filter(([k]) => k !== 'customWeb')
-                    .map(([k, t]) => [k, { name: t.name, icon: t.icon, color: t.color, logo: t.logo || null }])
-            ),
-            views: [...views]
-                .filter(([key, entry]) => entry.toolKey !== 'customWeb')
-                .map(([key, entry]) => serializeView(key, entry)),
-            activeKey: currentViewKey
-        });
+        refreshSidebarState();
         // Keep the top toolbar in sync with the restored web tools and bookmarks
         syncToolbar();
         syncBookmarks();
@@ -2097,6 +2291,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    initServices(); // load services.json (or seed defaults) before any window can render the tool list
     createWindow();
 
     app.on('activate', () => {
@@ -2141,6 +2336,31 @@ ipcMain.on('show-menu-popup', (_event, type, x, y) => {
     const menu = buildPopupMenu(type);
     menu.popup({ window: mainWindow, x, y });
 });
+// Settings > AI Tools: open the management window and CRUD / reorder tools in services.json.
+// Every mutation saves the file, rebuilds AI_TOOLS and pushes fresh state to the sidebar,
+// so the session list and File -> New Session menu pick up the change immediately.
+ipcMain.on('open-tools-editor', () => openToolsWindow());
+ipcMain.on('tools-open-json', (_e, inFolder) => openServicesJsonFile(!!inFolder));
+ipcMain.handle('tools-get', () => {
+    // Re-read the file on every fetch so manual external edits show up even if
+    // fs.watch missed them (opening the management window therefore always syncs).
+    const fresh = loadServicesFile();
+    if (fresh) {
+        servicesList = fresh;
+        rebuildToolMap();
+    }
+    return {
+        tools: servicesList.map(t => ({ ...t })),
+        usage: servicesList.reduce((m, t) => {
+            m[t.key] = [...views.values()].filter(e => e.toolKey === t.key).length;
+            return m;
+        }, {})
+    };
+});
+ipcMain.handle('tools-add', (_e, name, url) => { const r = addCustomTool(name, url); refreshSidebarState(); return r; });
+ipcMain.handle('tools-update', (_e, key, patch) => { const r = updateCustomTool(key, patch); refreshSidebarState(); return r; });
+ipcMain.handle('tools-remove', (_e, key) => { const r = removeCustomTool(key); if (r.ok) refreshSidebarState(); return r; });
+ipcMain.handle('tools-reorder', (_e, fromKey, toKey) => { const r = reorderCustomTool(fromKey, toKey); if (r.ok) refreshSidebarState(); return r; });
 // Settings > Cache: report disk usage / run the cleanup
 ipcMain.handle('get-cache-usage', () => getCacheUsage());
 ipcMain.handle('clean-cache', () => cleanCache());
@@ -2155,6 +2375,9 @@ ipcMain.handle('set-config', async (_event, patch) => {
         syncMenu(); // rebuild the custom toolbar menu when language changes
         if (toolbarView && !toolbarView.webContents.isDestroyed()) {
             toolbarView.webContents.send('lang-changed', cfg.lang);
+        }
+        if (toolsWin && !toolsWin.isDestroyed()) {
+            try { toolsWin.webContents.send('lang-changed', cfg.lang); } catch (e) {}
         }
     }
     return cfg;

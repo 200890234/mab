@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setConfig: (patch) => ipcRenderer.invoke('set-config', patch),
     getCacheUsage: () => ipcRenderer.invoke('get-cache-usage'),
     cleanCache: () => ipcRenderer.invoke('clean-cache'),
+    openTools: () => ipcRenderer.send('open-tools-editor'),
 
     // Full state pushed by the main process (tool list + session list + current active item)
     onStateSync: (cb) => ipcRenderer.on('state-sync', (_e, data) => cb(data)),
