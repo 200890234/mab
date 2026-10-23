@@ -2146,6 +2146,14 @@ function createWindow() {
     // Auto-recover the sidebar if its renderer crashes, otherwise the whole UI goes blank
     sidebarView.webContents.on('crashed', () => { if (!sidebarView.webContents.isDestroyed()) sidebarView.webContents.reload(); });
     sidebarView.webContents.on('render-process-gone', () => { if (!sidebarView.webContents.isDestroyed()) sidebarView.webContents.reload(); });
+    // Clicking outside the sidebar (an AI page, the toolbar, another app) never reaches the
+    // sidebar's own outside-click handler, because the sidebar is a separate WebContentsView.
+    // Losing focus is the reliable signal for "the user went elsewhere" — collapse the panel.
+    sidebarView.webContents.on('blur', () => {
+        if (sidebarView && !sidebarView.webContents.isDestroyed()) {
+            sidebarView.webContents.send('settings-hide');
+        }
+    });
 
     // Top toolbar for arbitrary web pages (its own row, just below the native title bar)
     toolbarView = new WebContentsView({

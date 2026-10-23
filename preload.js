@@ -32,5 +32,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onViewRenamed: (cb) => ipcRenderer.on('view-renamed', (_e, data) => cb(data)),
     onNotification: (cb) => ipcRenderer.on('show-notification', (_e, message) => cb(message)),
     openExternal: (url) => ipcRenderer.send('open-external', url),
-    onUpdateInfo: (cb) => ipcRenderer.on('update-info', (_e, info) => cb(info))
+    onUpdateInfo: (cb) => ipcRenderer.on('update-info', (_e, info) => cb(info)),
+    // Sidebar lost focus (user clicked an AI page / toolbar / other app): collapse the settings panel
+    onSettingsHide: (cb) => ipcRenderer.on('settings-hide', () => cb())
 });

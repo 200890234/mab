@@ -644,6 +644,23 @@
                 }
             });
 
+            // Clicks outside the sidebar never reach this renderer (separate WebContentsView);
+            // the main process reports sidebar blur instead — collapse then, and on Esc too.
+            window.electronAPI.onSettingsHide(() => panel.classList.remove('open'));
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') panel.classList.remove('open');
+            });
+
+            // Hover-out collapse: moving the mouse off the panel closes it after a short grace
+            // period, so quick stray movements don't slam it shut; moving back cancels the timer.
+            let hoverCloseTimer = null;
+            panel.addEventListener('mouseleave', () => {
+                clearTimeout(hoverCloseTimer);
+                hoverCloseTimer = setTimeout(() => panel.classList.remove('open'), 300);
+            });
+            panel.addEventListener('mouseenter', () => clearTimeout(hoverCloseTimer));
+            btn.addEventListener('mouseenter', () => clearTimeout(hoverCloseTimer));
+
             // Top-bar language / theme buttons (equivalent to the in-panel segments)
             document.getElementById('btnLang').addEventListener('click', (e) => {
                 e.stopPropagation();
