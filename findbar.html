@@ -157,6 +157,22 @@
         nextBtn.addEventListener('click', () => doFind(q.value.trim(), true));
         closeBtn.addEventListener('click', () => ipcRenderer.send('find-hide-bar'));
 
+        // Ctrl+F while the bar already has focus: stay here and select the current query
+        // (standard browser behaviour). Content views handle the shortcut themselves; this
+        // covers the case where focus is inside the find input.
+        window.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+                e.preventDefault();
+                q.focus();
+                q.select();
+            }
+        });
+        // The main process re-shows the bar (another Ctrl+F): focus and select the existing text
+        ipcRenderer.on('find-focus', () => {
+            q.focus();
+            q.select();
+        });
+
         ipcRenderer.on('find-result', (_e, { activeMatchOrdinal, matches }) => {
             activeMatch = activeMatchOrdinal;
             matchCount = matches;

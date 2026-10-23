@@ -1,4 +1,4 @@
-const { app, BaseWindow, BrowserWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme, clipboard, globalShortcut } = require('electron');
+const { app, BaseWindow, BrowserWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -583,6 +583,13 @@ function createView(tool, partitionName, initialURL) {
 
     const wc = view.webContents;
 
+    // In-page search (Ctrl+F / Cmd+F), scoped to this view via before-input-event.
+    // Deliberately NOT a globalShortcut: a system-wide hotkey would hijack Ctrl+F from
+    // every other application whenever focus tracking slips. The trade-off is that the
+    // page must have keyboard focus — the window 'focus' hook (setupWindowHooks) restores
+    // it automatically when the window comes back to front.
+    attachFindShortcut(wc);
+
     // Ctrl+wheel zoom is listened for inside the renderer by zoom-preload.js and reported to the
     // main process via 'zoom-wheel'; this is more reliable than the main process listening to
     // mouse-wheel (unaffected by the page's own wheel handling).
@@ -793,10 +800,15 @@ function positionFindBar() {
     findView.setBounds({ x, y, width: FINDBAR_W, height: FINDBAR_H });
 }
 
-function showFindBar() {
+// `triggerWc` is the view whose before-input-event fired the shortcut. It is the
+// authoritative search target even when currentViewKey is still null (early startup) or
+// points at the previous view mid-switch; without it we fall back to the active view.
+function showFindBar(triggerWc = null) {
     if (!mainWindow) return;
     findBarVisible = true;
-    findActiveWebContents = currentViewKey ? views.get(currentViewKey)?.view?.webContents : null;
+    findActiveWebContents = (triggerWc && !triggerWc.isDestroyed())
+        ? triggerWc
+        : (currentViewKey ? views.get(currentViewKey)?.view?.webContents : null);
     if (!findView) {
         findView = new WebContentsView({
             webPreferences: { nodeIntegration: true, contextIsolation: false }
@@ -820,7 +832,22 @@ function showFindBar() {
         }
         positionFindBar();
         try { findView.webContents.focus(); } catch (e) {}
+        // Pressing Ctrl+F again re-focuses the bar and selects the existing query
+        try { findView.webContents.send('find-focus'); } catch (e) {}
     }
+}
+
+// Ctrl+F / Cmd+F for one view. `selfIsTarget` is true for content views (search that page);
+// false for chrome views (sidebar / toolbar), where the search target must stay the active
+// page rather than the chrome itself.
+function attachFindShortcut(wc, selfIsTarget = true) {
+    wc.on('before-input-event', (event, input) => {
+        if (input.type !== 'keyDown') return;
+        if (!(input.control || input.meta) || input.alt || input.shift) return;
+        if (String(input.key).toLowerCase() !== 'f') return;
+        event.preventDefault();
+        showFindBar(selfIsTarget ? wc : null);
+    });
 }
 
 function hideFindBar() {
@@ -901,30 +928,21 @@ function sendFindResult(activeMatchOrdinal, matches) {
 }
 
 // Ctrl+F / Cmd+F handling.
-// We use globalShortcut, but only keep it REGISTERED while MAB itself is in front.
-// On window blur (user switches to another application) we unregister so other
-// programs keep their own Ctrl+F; on focus we re-register. This avoids hijacking
-// Ctrl+F system-wide, while still making it work immediately on launch (no need to
-// click into the page first — WebContentsView.focus() is unreliable under BaseWindow).
-const FIND_ACCEL = 'CommandOrControl+F';
-function registerFindShortcut() {
-    try { globalShortcut.register(FIND_ACCEL, () => showFindBar()); } catch (e) {}
-}
-function unregisterFindShortcut() {
-    try { globalShortcut.unregister(FIND_ACCEL); } catch (e) {}
-}
-function setupFindShortcut() {
-    // Registered from the start (the app is in front right after launch), so the
-    // shortcut works without first clicking into the page.
-    registerFindShortcut();
-    mainWindow.on('focus', registerFindShortcut);
-    mainWindow.on('blur', () => {
-        // Only unregister when focus actually leaves the whole app.
-        setTimeout(() => {
-            if (!mainWindow || mainWindow.isDestroyed()) return;
-            if (mainWindow.isFocused()) return;
-            unregisterFindShortcut();
-        }, 80);
+// IMPORTANT: this must NOT use globalShortcut. A system-wide hotkey hijacks Ctrl+F for
+// every application whenever the register/unregister timing slips (focus detection under
+// BaseWindow + WebContentsView is unreliable), and keeps affecting the whole system while
+// any leftover process is alive. Instead, each content view intercepts Ctrl+F itself via
+// before-input-event (see createView): scoped to that page only, it can never affect other
+// software. The only trade-off is that the page needs keyboard focus — restored below
+// whenever the window regains focus.
+function setupWindowHooks() {
+    // Put the keyboard back into the active content view when the window regains focus,
+    // so Ctrl+F works immediately without clicking into the page first.
+    mainWindow.on('focus', () => {
+        const entry = currentViewKey && views.get(currentViewKey);
+        if (entry && !entry.view.webContents.isDestroyed()) {
+            try { entry.view.webContents.focus(); } catch (e) {}
+        }
     });
     // The pronunciation panel is a top-level always-on-top window, so hide it whenever
     // focus leaves the whole app; but NOT when focus simply moves to it (user clicked in).
@@ -970,6 +988,14 @@ function switchView(viewKey) {
     // Ensure it is mounted and brought to the top
     mainWindow.contentView.addChildView(entry.view);
     entry.view.setBounds(getContentArea());
+
+    // The find bar is a sibling child view: adding the content view just put it in front of
+    // (and visually hid) the bar. Re-raise it so an open find bar stays visible and keeps
+    // receiving input across view switches.
+    if (findBarVisible && findView && !findView.webContents.isDestroyed() && findViewAttached()) {
+        try { mainWindow.contentView.addChildView(findView); } catch (e) {}
+        positionFindBar();
+    }
 
     // Work around an Electron quirk where the first time a WebContentsView becomes
     // visible its internal viewport can be smaller than the view bounds, leaving a
@@ -2143,6 +2169,8 @@ function createWindow() {
     });
     mainWindow.contentView.addChildView(sidebarView);
     sidebarView.webContents.loadFile(path.join(__dirname, 'index.html'));
+    // Ctrl+F from the sidebar searches the active page (not the sidebar itself)
+    attachFindShortcut(sidebarView.webContents, false);
     // Auto-recover the sidebar if its renderer crashes, otherwise the whole UI goes blank
     sidebarView.webContents.on('crashed', () => { if (!sidebarView.webContents.isDestroyed()) sidebarView.webContents.reload(); });
     sidebarView.webContents.on('render-process-gone', () => { if (!sidebarView.webContents.isDestroyed()) sidebarView.webContents.reload(); });
@@ -2165,6 +2193,8 @@ function createWindow() {
         }
     });
     toolbarView.webContents.loadFile(path.join(__dirname, 'toolbar.html'));
+    // Ctrl+F while typing in the toolbar URL box searches the active page
+    attachFindShortcut(toolbarView.webContents, false);
     toolbarView.webContents.on('crashed', () => { if (!toolbarView.webContents.isDestroyed()) toolbarView.webContents.reload(); });
     toolbarView.webContents.on('render-process-gone', () => { if (!toolbarView.webContents.isDestroyed()) toolbarView.webContents.reload(); });
     // Make the toolbar view transparent; only the visible 30px row and opened dropdowns draw backgrounds.
@@ -2280,8 +2310,8 @@ function createWindow() {
         pushUpdateInfo();
     });
 
-    // Register the global Ctrl+F / Cmd+F shortcut for in-page search
-    setupFindShortcut();
+    // Window focus hooks (restore keyboard into the active view, hide floaters on leave)
+    setupWindowHooks();
 
     layout();
 
@@ -2435,8 +2465,6 @@ app.on('before-quit', () => {
         try { pronWin.destroy(); } catch (e) {}
         pronWin = null;
     }
-    // Release any global shortcuts so they don't linger after quit.
-    try { globalShortcut.unregisterAll(); } catch (e) {}
 });
 
 app.on('window-all-closed', () => {
