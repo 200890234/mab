@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6.1
+- Fixed Ctrl+F being captured system-wide: in-page search no longer uses a global hotkey, which could hijack Ctrl+F from every other application when focus tracking slipped and kept affecting the system while a leftover process was alive. It is now handled per view via `before-input-event` and can never touch other software.
+- Fixed the find bar disappearing after switching sessions: the newly activated content view was raised above it; the bar is now re-raised, stays visible and re-runs the last query on the new page.
+- Pressing Ctrl+F while the find bar is focused now re-selects the existing query; the shortcut also works with focus in the sidebar or the toolbar URL box (searching the active page).
+- The find bar now targets the view that actually fired the shortcut, covering startup and view-switch timing.
+
 ## v1.6.0
 - Added a user-configurable AI service list: the sidebar entries are no longer hardcoded and live in `services.json` inside the user data directory as the single source of truth (seeded with the 7 built-in services on first launch).
 - Added a management window (`Settings > Manage AI Services…`): add, rename, edit URLs, remove and drag-to-reorder services; every change applies immediately to the sidebar and the `File > New Session` menu.
