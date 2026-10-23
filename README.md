@@ -65,7 +65,7 @@ Open **Settings** from the sidebar footer:
 
 ## Proxy configuration
 
-Set the `AI_BROWSER_PROXY` environment variable before launching (e.g. `http=127.0.0.1:7890;https=127.0.0.1:7890`). It is only applied to tools with `needsProxy: true`.
+By default the app follows the system proxy (e.g. Clash's "System Proxy" / TUN mode), and the rules apply to every tab. Optionally set the `AI_BROWSER_PROXY` environment variable before launching to override it with explicit rules:
 
 ```bash
 # Windows (PowerShell)
@@ -73,20 +73,25 @@ $env:AI_BROWSER_PROXY = "http=127.0.0.1:7890;https=127.0.0.1:7890"
 npm start
 ```
 
-## Customizing AI tools
+## Managing AI services
 
-Edit the `AI_TOOLS` object at the top of `main.js` to add or remove AI tools:
+The sidebar service list is user-configurable and stored in `services.json` inside the user data directory (`%APPDATA%\MyAIBrowser\services.json` on Windows). It is the single source of truth: the sidebar, the `File > New Session` menu and per-service login partitions are all derived from it.
+
+- **In-app editor**: open `Settings` (gear icon) and click `Manage AI Services…` to add, rename, remove or drag-to-reorder services. Changes apply immediately.
+- **Manual editing**: use `File > Open services.json` to open the file in your editor; saved changes are picked up live, no restart needed. Each entry looks like this:
 
 | Field | Description |
 | --- | --- |
+| `key` | Stable identifier (also names the login partition). Auto-generated for new services. |
 | `name` | Display name (also used as the default tab name). |
-| `url` | Home URL loaded for the tool. |
-| `icon` | Short text badge shown in the sidebar (e.g. `GPT`, `豆`). |
-| `color` | Brand color for the sidebar dot/badge. |
+| `url` | Home URL loaded for the service. |
+| `icon` | Optional short text badge shown in the sidebar (defaults to the first letter of `name`). |
+| `color` | Brand color for the sidebar badge. |
 | `logo` | Optional path to a logo image (`assets/logos/<name>.png`). |
-| `needsProxy` | `true` to route this tool through `AI_BROWSER_PROXY`. |
 
-Tool logos live in `assets/logos/`. The app icon (`assets/icon.ico`) takes effect after rebuild.
+Removing a service that still has open sessions asks for confirmation: its tabs disappear on the next launch, while its login data stays on disk (cleanable in `Settings > Cache`).
+
+Service logos live in `assets/logos/`. The app icon (`assets/icon.ico`) takes effect after rebuild.
 
 To regenerate the icon, run `python gen_icon.py` (writes `assets/icon.ico`).
 

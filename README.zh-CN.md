@@ -65,7 +65,7 @@ C:\Users\<用户名>\AppData\Roaming\MyAIBrowser
 
 ## 代理配置
 
-启动前设置环境变量 `AI_BROWSER_PROXY`（例如 `http=127.0.0.1:7890;https=127.0.0.1:7890`）。该代理仅应用于 `needsProxy: true` 的工具。
+默认跟随系统代理（如 Clash 的"系统代理"/TUN 模式），规则对所有标签页生效。可选地在启动前设置环境变量 `AI_BROWSER_PROXY` 以显式规则覆盖：
 
 ```bash
 # Windows (PowerShell)
@@ -73,20 +73,25 @@ $env:AI_BROWSER_PROXY = "http=127.0.0.1:7890;https=127.0.0.1:7890"
 npm start
 ```
 
-## 自定义 AI 工具
+## 管理 AI 服务
 
-编辑 `main.js` 顶部的 `AI_TOOLS` 对象即可增删 AI 工具：
+左侧 AI 服务列表支持用户自定义，配置保存在用户数据目录下的 `services.json`（Windows 为 `%APPDATA%\MyAIBrowser\services.json`），是唯一数据源：侧边栏、`文件 > 新建会话` 菜单和各服务的登录分区都由它派生。
+
+- **应用内编辑**：打开 `设置`（齿轮图标）点击 `管理 AI 服务…`，即可添加、改名、移除或拖拽排序，更改立即生效。
+- **手动编辑**：通过 `文件 > 打开 services.json` 用编辑器打开该文件，保存后自动生效、无需重启。条目结构如下：
 
 | 字段 | 说明 |
 | --- | --- |
+| `key` | 稳定标识（同时决定登录分区名），新增服务时自动生成。 |
 | `name` | 显示名称（同时作为默认标签页名称）。 |
-| `url` | 该工具加载的首页地址。 |
-| `icon` | 侧边栏显示的简短文字徽标（如 `GPT`、`豆`）。 |
-| `color` | 侧边栏圆点/徽标的品牌色。 |
+| `url` | 该服务加载的首页地址。 |
+| `icon` | 可选，侧边栏显示的简短文字徽标（缺省取 `name` 首字母）。 |
+| `color` | 侧边栏徽标的品牌色。 |
 | `logo` | 可选 logo 图片路径（`assets/logos/<名称>.png`）。 |
-| `needsProxy` | 设为 `true` 时该工具走 `AI_BROWSER_PROXY` 代理。 |
 
-各工具 logo 位于 `assets/logos/`。应用图标 `assets/icon.ico` 在重新打包后生效。
+删除仍有打开会话的服务会先弹确认：其标签页将在下次启动时消失，登录数据保留在磁盘（可在 `设置 > 缓存` 中清理）。
+
+各服务 logo 位于 `assets/logos/`。应用图标 `assets/icon.ico` 在重新打包后生效。
 
 重新生成图标可运行 `python gen_icon.py`（写入 `assets/icon.ico`）。
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.6.0
+- Added a user-configurable AI service list: the sidebar entries are no longer hardcoded and live in `services.json` inside the user data directory as the single source of truth (seeded with the 7 built-in services on first launch).
+- Added a management window (`Settings > Manage AI Services…`): add, rename, edit URLs, remove and drag-to-reorder services; every change applies immediately to the sidebar and the `File > New Session` menu.
+- Removing a service that still has open sessions asks for confirmation first: its tabs disappear on the next launch, while its login data stays on disk and remains cleanable in `Settings > Cache`.
+- Added `File > Open services.json` for manual editing of the configuration; external edits are picked up live (fs.watch), no restart needed.
+- Automatically migrates the earlier `tools.json` configuration to the new `services.json` name.
+- Settings panel improvements: the panel now collapses when the mouse moves off it (with a 300ms grace period), when the sidebar loses focus (clicking an AI page, the toolbar, or another app), and on `Esc` — no second click on the gear icon needed.
+
 ## v1.5.1
 - Added toolbar bookmarks ("favorites"): persistent shortcuts for frequently visited sites such as daily check-in pages. Each bookmark gets a dedicated partition, so its login state survives closing the tab — open the site, check in, close the tab, and you are still logged in the next day. Bookmarks are managed from a right-click menu (open/close tab, edit name & URL, remove), can be reordered by drag & drop, and the row scrolls horizontally when they overflow it.
 - The toolbar `+` button now adds a bookmark (name optional) and opens it immediately, instead of opening a blank tab.
