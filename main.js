@@ -875,6 +875,8 @@ function clearPageFind() {
 
 function findInPage(text, forward) {
     text = text || '';
+    // Remember the active query: switching sessions re-runs it against the new page
+    lastFindQuery = text;
     if (!findActiveWebContents || findActiveWebContents.isDestroyed()) {
         findActiveWebContents = currentViewKey ? views.get(currentViewKey)?.view?.webContents : null;
     }

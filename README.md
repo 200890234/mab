@@ -18,13 +18,20 @@ English is the default UI language.
 
 ## Features
 
-- **Multi-session tabs** — Create multiple sessions per AI tool; each session keeps its own page state.
-- **Persistent login** — Sessions are isolated via Electron `persist:` partitions, so login state survives restarts (same machine).
-- **Session restore** — Tabs, active tab, window size, and sidebar width are restored on the next launch.
-- **Proxy support** — Per-tool proxy via the `AI_BROWSER_PROXY` environment variable (applied only to tools flagged `needsProxy`).
+- **Multi-session tabs** — Create multiple sessions per AI service; each session keeps its own page state while sharing the service's login.
+- **Persistent login** — Every service runs in its own Electron `persist:` partition, so login state survives restarts and closing a tab (same machine).
+- **Session & workspace restore** — Tabs, active tab, window size, sidebar width, bookmarks and the service list all come back on the next launch.
+- **Toolbar bookmarks** — Keep frequently used sites (e.g. daily check-ins) one click away. Closing the tab keeps both the bookmark and its login state.
+- **User-configurable AI services** — The sidebar list is not hardcoded: add, rename, remove and reorder services in `Manage AI Services`, or edit `services.json` directly (changes apply live, no restart).
+- **In-page search** — `Ctrl+F` opens a floating find bar with a match counter and next/previous navigation. It is scoped to the app and never takes over the system-wide shortcut.
+- **Pronunciation & read-aloud** — Select a word and right-click for IPA/phonetics, part of speech and audio; read any selection aloud with the built-in Edge neural TTS.
+- **Custom toolbar & menus** — A 30px toolbar with `File / View / Help`, arbitrary web pages as tabs, and back / forward / reload / zoom / DevTools.
+- **Themes & languages** — Light/dark themes that sync across every view; English/Chinese UI.
+- **Cache management** — See how much disk the tab partitions occupy and clean HTTP/code caches plus orphaned partitions without touching login state.
+- **Proxy support** — Follows the system proxy by default (Clash / TUN mode); override with the `AI_BROWSER_PROXY` environment variable.
 - **Auto-launch** — Optional "Launch at startup" toggle in Settings.
-- **Auto retry** — Transient network errors (e.g. proxy not ready yet) are retried automatically instead of showing an error page.
-- **Context menu & app menu** — Back / forward / reload / zoom / DevTools, plus right-click copy / paste / cut / reload.
+- **Resilient loading** — Transient network errors are retried automatically, and renderer crashes recover by reloading.
+- **Update check** — Silent check on launch with a sidebar badge, plus `Help → Check for Updates`.
 
 ## Development
 
@@ -55,11 +62,15 @@ C:\Users\<username>\AppData\Roaming\MyAIBrowser
 
 ## Settings
 
-Open **Settings** from the sidebar footer:
+Open **Settings** from the gear icon at the top of the sidebar:
 
 | Option | Description |
 | --- | --- |
 | Launch at startup | Add the app to the system login items. |
+| Language | Switch the UI between English and Chinese. |
+| Theme | Light / Dark, applied to every view immediately. |
+| Cache | Show how much disk the tab partitions occupy, and clean HTTP/code caches plus orphaned partitions (login state is preserved). |
+| Manage AI Services… | Open the service manager: add / rename / edit URLs / remove / reorder. |
 
 > **Proxy** is not set in the UI. Configure it through the environment variable below.
 
