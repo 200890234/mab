@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.6.2
+- Fixed the find bar not re-running the current query after switching sessions: the active query was never recorded, so the re-search introduced in v1.6.1 silently did nothing.
+- Updated both READMEs (EN/ZH): the feature list now reflects the current product (bookmarks, configurable services, in-page search, pronunciation, themes, cache cleanup, system proxy, update check), the Settings table is complete, and the settings entry location is corrected.
+
 ## v1.6.1
 - Fixed Ctrl+F being captured system-wide: in-page search no longer uses a global hotkey, which could hijack Ctrl+F from every other application when focus tracking slipped and kept affecting the system while a leftover process was alive. It is now handled per view via `before-input-event` and can never touch other software.
 - Fixed the find bar disappearing after switching sessions: the newly activated content view was raised above it; the bar is now re-raised, stays visible and re-runs the last query on the new page.
