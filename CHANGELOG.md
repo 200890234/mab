@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.6.4
+- Isolated instances (`MAB_USER_DATA`) now mark their window title with a `(Demo)` prefix, so a demo/guest instance can run side by side with the normal one and be targeted precisely (for example by an AutoHotkey launcher) without touching real data.
+
 ## v1.6.3
 - Added an optional `MAB_USER_DATA` environment variable: it runs MAB with a completely separate profile (sessions, login state, bookmarks, services and caches) while leaving the normal userData untouched. Useful for demos, testing or a guest profile — delete the directory to reset that instance.
 - Documented the isolated-instance workflow in both READMEs.
