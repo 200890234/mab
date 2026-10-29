@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.6.5
+- Added optional sponsorship entry points: `Help > About` now offers a Sponsor button that opens the project's Afdian page, both READMEs gained a Support section, and `.github/FUNDING.yml` enables GitHub's Sponsor button. The project stays MIT-licensed and no features are gated behind sponsorship.
+
 ## v1.6.4
 - Isolated instances (`MAB_USER_DATA`) now mark their window title with a `(Demo)` prefix, so a demo/guest instance can run side by side with the normal one and be targeted precisely (for example by an AutoHotkey launcher) without touching real data.
 
