@@ -49,6 +49,19 @@ npm run pack       # build unpacked directory only -> dist/win-unpacked/
 
 The build output goes to `dist/` as an NSIS installer (selectable install directory, desktop + start menu shortcuts).
 
+### Running an isolated instance (clean profile)
+
+Set `MAB_USER_DATA` before launching to run MAB with completely separate data — sessions, login
+state, bookmarks, services and caches all live in that directory, so the normal profile is
+untouched. Handy for demos, testing, or a "guest" profile:
+
+```powershell
+$env:MAB_USER_DATA = "D:\mab-demo"
+npm start
+```
+
+Delete the directory to reset the instance to a brand-new state.
+
 ## Data location
 
 User data (tabs, login state) is stored at:

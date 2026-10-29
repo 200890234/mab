@@ -15,7 +15,11 @@ if (!process.env.MAB_DEBUG) {
 
 // Fixed userData directory, to avoid Electron deriving the path from package.json name/productName.
 // Previously name drift (my_ai_browser / Mervyn's AI Browser) caused sessions.json and login state to be lost on restart.
-const FIXED_USER_DATA = path.join(os.homedir(), 'AppData', 'Roaming', 'MyAIBrowser');
+// MAB_USER_DATA runs a fully isolated instance (sessions, login state, bookmarks, services, caches)
+// without touching the real profile — useful for demos, testing or a "guest" profile.
+const FIXED_USER_DATA = process.env.MAB_USER_DATA
+    ? path.resolve(process.env.MAB_USER_DATA)
+    : path.join(os.homedir(), 'AppData', 'Roaming', 'MyAIBrowser');
 try { app.setPath('userData', FIXED_USER_DATA); } catch (e) { console.error('[init] set userData failed:', e); }
 
 // Unified app name (shown in the menu, without a version suffix)
