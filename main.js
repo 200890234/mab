@@ -20,6 +20,9 @@ if (!process.env.MAB_DEBUG) {
 const FIXED_USER_DATA = process.env.MAB_USER_DATA
     ? path.resolve(process.env.MAB_USER_DATA)
     : path.join(os.homedir(), 'AppData', 'Roaming', 'MyAIBrowser');
+// An isolated instance (custom data dir) marks its window title with "(Demo)", so launchers and
+// scripts can tell it apart from the normal instance running side by side.
+const IS_CUSTOM_DATA = !!process.env.MAB_USER_DATA;
 try { app.setPath('userData', FIXED_USER_DATA); } catch (e) { console.error('[init] set userData failed:', e); }
 
 // Unified app name (shown in the menu, without a version suffix)
@@ -698,7 +701,8 @@ function syncTitle() {
     if (!entry || entry.view.webContents.isDestroyed()) return;
     // Use the tab name (renamable) as the title core
     const tabName = entry.name || 'Untitled';
-    mainWindow.setTitle(`MAB - ${tabName} - ${APP_FULL_NAME}`);
+    const prefix = IS_CUSTOM_DATA ? 'MAB (Demo)' : 'MAB';
+    mainWindow.setTitle(`${prefix} - ${tabName} - ${APP_FULL_NAME}`);
 }
 
 // ---------------- In-page search (Ctrl+F) ----------------
