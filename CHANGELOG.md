@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.6.3
+- Added an optional `MAB_USER_DATA` environment variable: it runs MAB with a completely separate profile (sessions, login state, bookmarks, services and caches) while leaving the normal userData untouched. Useful for demos, testing or a guest profile — delete the directory to reset that instance.
+- Documented the isolated-instance workflow in both READMEs.
+
 ## v1.6.2
 - Fixed the find bar not re-running the current query after switching sessions: the active query was never recorded, so the re-search introduced in v1.6.1 silently did nothing.
 - Updated both READMEs (EN/ZH): the feature list now reflects the current product (bookmarks, configurable services, in-page search, pronunciation, themes, cache cleanup, system proxy, update check), the Settings table is complete, and the settings entry location is corrected.
