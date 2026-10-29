@@ -135,6 +135,10 @@ The brand names, logos, and trademarks of ChatGPT/OpenAI, Gemini/Google, DeepSee
 
 All other trademarks, service marks, and trade names referenced in this project are the property of their respective holders.
 
+## Support
+
+If MAB saves you time, you can support its development on [Afdian](https://afdian.com/a/mervyn) (Alipay / WeChat Pay). Sponsorship is entirely optional — the project stays open source under MIT and no features are locked behind it.
+
 ## License
 
 MIT © 2026 Mervyn — see [LICENSE](LICENSE).

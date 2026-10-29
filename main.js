@@ -28,6 +28,8 @@ try { app.setPath('userData', FIXED_USER_DATA); } catch (e) { console.error('[in
 // Unified app name (shown in the menu, without a version suffix)
 try { app.setName('MAB'); } catch (e) { console.error('[init] set app name failed:', e); }
 const APP_FULL_NAME = "Mervyn's AI Browser";
+// Optional sponsorship link shown in Help > About (and linked from the README / FUNDING.yml)
+const SPONSOR_URL = 'https://afdian.com/a/mervyn';
 
 let sidebarWidth = 220;
 const SIDEBAR_MIN_WIDTH = 140;
@@ -1078,9 +1080,13 @@ function showAboutDialog() {
         detail: isZh
             ? `版本 ${version}\n\n基于 Electron 构建的多会话 AI 浏览器，可并排打开 ${servicesList.map(t => t.name).join('、')} 等，每个会话相互独立并保留登录态。\n\n© 2026 Mervyn`
             : `Version ${version}\n\nA multi-session AI browser built with Electron. Open ${servicesList.map(t => t.name).join(', ')} side by side in isolated, persistent sessions.\n\n© 2026 Mervyn`,
-        buttons: [isZh ? '确定' : 'OK'],
+        buttons: isZh ? ['支持开发', '确定'] : ['Sponsor', 'OK'],
+        defaultId: 1,
+        cancelId: 1,
         icon: ico,
         noLink: true
+    }).then(({ response }) => {
+        if (response === 0) shell.openExternal(SPONSOR_URL);
     });
 }
 

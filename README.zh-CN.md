@@ -133,6 +133,10 @@ ChatGPT/OpenAI、Gemini/Google、DeepSeek、豆包/字节跳动、通义千问/�
 
 其余被提及的商标、服务标志与商号均归各自权利人所有。
 
+## 支持开发
+
+如果 MAB 帮你节省了时间，可以在[爱发电](https://afdian.com/a/mervyn)支持开发（支付宝 / 微信）。赞助完全自愿，项目保持 MIT 开源，不会因此锁定任何功能。
+
 ## 许可证
 
 MIT © 2026 Mervyn —— 详见 [LICENSE](LICENSE)。
