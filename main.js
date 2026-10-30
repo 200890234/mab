@@ -267,7 +267,7 @@ function reorderCustomTool(fromKey, toKey) {
 }
 
 // Initial default sessions (used only on first launch with no history)
-const DEFAULT_SESSIONS = ['gemini', 'gemini', 'deepseek'];
+const DEFAULT_SESSIONS = ['chatgpt', 'gemini'];
 
 // ---------------- Session persistence ----------------
 // Stored in the userData directory alongside partition data, so it is cleaned up together on uninstall.
