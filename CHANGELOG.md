@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.6.6
+- Added Microsoft Copilot to the built-in service list, between Gemini and Claude, pointing at `https://copilot.microsoft.com`.
+- The built-in seeds only apply to new or reset profiles; existing profiles keep their own list and order. Add Copilot from `Manage AI Services` if it is not there yet.
+
 ## v1.6.5
 - Added optional sponsorship entry points: `Help > About` now offers a Sponsor button that opens the project's Afdian page, both READMEs gained a Support section, and `.github/FUNDING.yml` enables GitHub's Sponsor button. The project stays MIT-licensed and no features are gated behind sponsorship.
 
