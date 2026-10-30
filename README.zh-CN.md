@@ -2,7 +2,7 @@
 
 # Mervyn 的 AI 浏览器
 
-基于 Electron 构建的多会话 AI 浏览器。可并排打开 Gemini、DeepSeek、ChatGPT、豆包、千问、智谱清言、Claude 等，每个会话相互独立并保留登录态。
+基于 Electron 构建的多会话 AI 浏览器。可并排打开 ChatGPT、Gemini、Copilot、Claude、DeepSeek、Qwen、Doubao、ChatGLM 等，每个会话相互独立并保留登录态。
 
 默认界面语言为英文。
 

@@ -2,7 +2,7 @@
 
 # Mervyn's AI Browser
 
-A multi-session AI browser built with Electron. Open Gemini, DeepSeek, ChatGPT, Doubao, Qwen, Zhipu AI, and Claude side by side in isolated, persistent sessions.
+A multi-session AI browser built with Electron. Open ChatGPT, Gemini, Copilot, Claude, DeepSeek, Qwen, Doubao and ChatGLM side by side in isolated, persistent sessions.
 
 English is the default UI language.
 

@@ -67,6 +67,7 @@ let bookmarkSeq = 0;
 const DEFAULT_SERVICES = [
     { key: 'chatgpt', name: 'ChatGPT', url: 'https://chat.openai.com', icon: 'GPT', logo: 'assets/logos/chatgpt.png', color: '#10A37F' },
     { key: 'gemini', name: 'Gemini', url: 'https://gemini.google.com/app', icon: 'G', logo: 'assets/logos/gemini.png', color: '#4285F4' },
+    { key: 'copilot', name: 'Copilot', url: 'https://copilot.microsoft.com', icon: 'Co', logo: null, color: '#0F6CBD' },
     { key: 'claude', name: 'Claude', url: 'https://claude.ai', icon: 'C', logo: null, color: '#D97757' },
     { key: 'deepseek', name: 'DeepSeek', url: 'https://chat.deepseek.com', icon: 'DS', logo: 'assets/logos/deepseek.png', color: '#4D6BFE' },
     { key: 'qianwen', name: 'Qwen', url: 'https://qianwen.com', icon: 'Q', logo: null, color: '#FF6A00' },
