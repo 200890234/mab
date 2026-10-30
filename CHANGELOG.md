@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.6.7
+- Fresh installs now start with one ChatGPT session and one Gemini session (previously two Gemini and one DeepSeek), which shows service isolation more clearly with a tidier initial sidebar. Existing profiles keep their tabs.
+
 ## v1.6.6
 - Added Microsoft Copilot to the built-in service list, between Gemini and Claude, pointing at `https://copilot.microsoft.com`.
 - The built-in seeds only apply to new or reset profiles; existing profiles keep their own list and order. Add Copilot from `Manage AI Services` if it is not there yet.
