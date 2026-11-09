@@ -365,7 +365,28 @@ function setAutoStart(enabled) {
     return on;
 }
 
+// A usable state file must contain at least one saved session. Used to decide whether
+// the .bak copy should be restored (e.g. after an empty/corrupt write).
+function hasSavedSessions(file) {
+    try {
+        const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+        return !!raw && Array.isArray(raw.sessions) && raw.sessions.length > 0;
+    } catch (e) {
+        return false;
+    }
+}
+
 function loadState() {
+    // Recover from a previous empty/corrupt sessions.json using the last good backup
+    const stateFile = STATE_FILE();
+    if (!hasSavedSessions(stateFile) && hasSavedSessions(stateFile + '.bak')) {
+        try {
+            fs.copyFileSync(stateFile + '.bak', stateFile);
+            console.log('[persist] restored sessions.json from backup');
+        } catch (e) {
+            console.error('[persist] backup restore failed:', e);
+        }
+    }
     try {
         const file = STATE_FILE();
         if (!fs.existsSync(file)) {
@@ -418,6 +439,12 @@ function loadState() {
 }
 
 function saveState() {
+    // After the window starts closing, lingering renderer processes can still fire
+    // did-navigate -> scheduleSave(). At that point `views` has been cleared, and writing
+    // would overwrite sessions.json with an empty list, losing every saved tab.
+    // A running app always has at least one session (the last one cannot be closed), so an
+    // empty views map is never a valid state to persist.
+    if (shuttingDown || views.size === 0) return;
     // When the window is destroyed getBounds() throws, so keep the last known size
     let windowBounds = lastWindowBounds;
     try {
@@ -451,6 +478,11 @@ function saveState() {
     try {
         const file = STATE_FILE();
         fs.mkdirSync(path.dirname(file), { recursive: true });
+        // Keep one previous good copy as a recovery source: loadState() falls back to it
+        // if the main file is ever empty or corrupted.
+        try {
+            if (fs.existsSync(file)) fs.copyFileSync(file, file + '.bak');
+        } catch (e) { /* backup is best-effort */ }
         // Write to a temp file then rename, to avoid a half-written JSON if power is lost mid-exit
         const tmp = file + '.tmp';
         fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
@@ -488,6 +520,7 @@ function hostFromUrl(url) {
 // Debounced save, to avoid repeated disk writes during frequent navigation
 let saveTimer = null;
 function scheduleSave() {
+    if (shuttingDown) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveState, 800);
 }
@@ -496,11 +529,15 @@ function scheduleSave() {
 // sidebar resize). These are infrequent but must not be lost if the process is
 // killed (e.g. via Task Manager) before the 800ms debounce window elapses.
 function saveStateNow() {
+    if (shuttingDown) return;
     clearTimeout(saveTimer);
     saveState();
 }
 
 let lastWindowBounds = null;
+// True once the main window starts closing. From then on NO code path may write
+// sessions.json again (see saveState's guard).
+let shuttingDown = false;
 // Flag whether we already saved in the close event, to avoid before-quit overwriting with empty data after the window is destroyed
 let savedAtExit = false;
 
@@ -2264,20 +2301,42 @@ function createWindow() {
     });
     // Save while the window is still alive, so we can read the real bounds and page URL
     mainWindow.on('close', () => {
-        // Window is still alive here, so we can read the real bounds and page URL
+        // Window is still alive here, so we can read the real bounds and page URL.
+        // This is the LAST legitimate write to sessions.json.
         clearTimeout(saveTimer);
         saveState();
+        shuttingDown = true; // no further writes, even from lingering renderers
         savedAtExit = true;
     });
     mainWindow.on('closed', () => {
-        mainWindow = null;
-        sidebarView = null;
-        toolbarView = null;
+        shuttingDown = true;
+        clearTimeout(saveTimer);
+        // Destroy every WebContents before clearing the map. Hidden floaters and child
+        // views otherwise keep Chromium renderers alive, so window-all-closed never
+        // fires and the process lingers in Task Manager.
+        mainWindow = null; // makes destroyView() skip removeChildView on a dead window
+        for (const entry of views.values()) destroyView(entry);
         views.clear();
         currentViewKey = null;
-        // Don't keep the app alive just for the tools window after the main window is gone
-        if (toolsWin && !toolsWin.isDestroyed()) toolsWin.destroy();
+        for (const v of [sidebarView, toolbarView, findView]) {
+            try {
+                if (v && v.webContents && !v.webContents.isDestroyed()) v.webContents.close();
+            } catch (e) { /* already gone */ }
+        }
+        sidebarView = null;
+        toolbarView = null;
+        findView = null;
+        if (toolsWin && !toolsWin.isDestroyed()) {
+            try { toolsWin.destroy(); } catch (e) {}
+        }
         toolsWin = null;
+        if (pronWin && !pronWin.isDestroyed()) {
+            try { pronWin.destroy(); } catch (e) {}
+        }
+        pronWin = null;
+        // Force a clean exit on Windows: relying on window-all-closed proved unreliable
+        // while a hidden BrowserWindow or child WebContents was still alive.
+        if (process.platform !== 'darwin') app.exit(0);
     });
 
     // Wait until the sidebar is ready before creating sessions, so the UI can receive events
@@ -2345,7 +2404,23 @@ function createWindow() {
     }, 800);
 }
 
+// The lock is scoped to the userData directory: two instances sharing one profile would
+// overwrite each other's sessions.json. An isolated MAB_USER_DATA demo instance uses a
+// different directory and can still run side by side with the normal one.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+    app.quit();
+} else {
+    app.on('second-instance', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+        }
+    });
+}
+
 app.whenReady().then(() => {
+    if (!gotSingleInstanceLock) return;
     initServices(); // load services.json (or seed defaults) before any window can render the tool list
     createWindow();
 
