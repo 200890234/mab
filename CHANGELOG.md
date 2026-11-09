@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.6.9
+- Fixed the Manage AI Services window being blank in installed builds: `tools.html` and `tools-preload.js` were missing from the electron-builder `files` whitelist, so the packaged app could not load the management window. Running from source was unaffected.
+
 ## v1.6.8
 - Fixed sessions being lost when the app was closed and reopened later: renderer processes left running after the window closed could still trigger a navigation-triggered save, overwriting `sessions.json` with an empty tab list.
 - Any state write is now refused once the window starts closing (and whenever no views are mounted). On close, every content view, child view and floating window is destroyed and the process exits cleanly on Windows, so no MAB processes linger in Task Manager.
