@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6.8
+- Fixed sessions being lost when the app was closed and reopened later: renderer processes left running after the window closed could still trigger a navigation-triggered save, overwriting `sessions.json` with an empty tab list.
+- Any state write is now refused once the window starts closing (and whenever no views are mounted). On close, every content view, child view and floating window is destroyed and the process exits cleanly on Windows, so no MAB processes linger in Task Manager.
+- A `sessions.json.bak` copy is kept before every save; an empty or corrupt `sessions.json` is automatically restored from that backup on the next launch.
+- Added a per-userData single-instance lock: launching MAB twice (e.g. auto-start plus a manual double-click of the installed version) now focuses the existing window instead of starting a second instance that would overwrite the shared state. Isolated `MAB_USER_DATA` instances can still run side by side.
+
 ## v1.6.7
 - Fresh installs now start with one ChatGPT session and one Gemini session (previously two Gemini and one DeepSeek), which shows service isolation more clearly with a tidier initial sidebar. Existing profiles keep their tabs.
 
