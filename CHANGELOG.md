@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.6.10
+- Removing a service in `Manage AI Services` now always asks for confirmation. Previously the dialog only appeared when the service had open sessions, so a single click could delete a service by accident. The dialog defaults to Cancel and follows the UI language.
+
 ## v1.6.9
 - Fixed the Manage AI Services window being blank in installed builds: `tools.html` and `tools-preload.js` were missing from the electron-builder `files` whitelist, so the packaged app could not load the management window. Running from source was unaffected.
 
