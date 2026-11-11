@@ -228,26 +228,38 @@ function updateCustomTool(key, patch) {
     return { ok: true };
 }
 
-// Remove a tool. When sessions of it are open, a confirmation dialog is shown first:
-// their tabs disappear on the next launch (login data stays on disk, cleanable in Settings).
+// Remove a tool. A confirmation dialog is ALWAYS shown first (deleting by a single click
+// was too easy to trigger by mistake). Its wording depends on whether sessions are open:
+// those tabs disappear on the next launch while the login data stays on disk.
 // Returns { ok, cancelled?, error? }.
 function removeCustomTool(key) {
     const idx = servicesList.findIndex(t => t.key === key);
     if (idx === -1) return { ok: false, error: 'notfound' };
+    const tool = servicesList[idx];
     const openCount = [...views.values()].filter(e => e.toolKey === key).length;
-    if (openCount > 0 && mainWindow && !mainWindow.isDestroyed()) {
-        const t = servicesList[idx];
-        // showMessageBoxSync returns the button index (a plain number, NOT an object)
-        const choice = dialog.showMessageBoxSync(mainWindow, {
-            type: 'warning',
-            buttons: ['Remove', 'Cancel'],
-            defaultId: 1,
-            cancelId: 1,
-            message: `Remove "${t.name}"?`,
-            detail: `${openCount} open session(s) use this tool. Their tabs will disappear on the next launch. Login data stays on disk and can be cleaned up in Settings > Cache.`
-        });
-        if (choice !== 0) return { ok: false, cancelled: true };
-    }
+    const isZh = appConfig.lang === 'zh';
+    const opts = {
+        type: 'warning',
+        buttons: isZh ? ['移除', '取消'] : ['Remove', 'Cancel'],
+        defaultId: 1, // default to Cancel, so Enter cannot delete by accident
+        cancelId: 1,
+        title: isZh ? '移除 AI 服务' : 'Remove AI Service',
+        message: isZh ? `确定移除「${tool.name}」？` : `Remove "${tool.name}"?`,
+        detail: openCount > 0
+            ? (isZh
+                ? `${openCount} 个打开的会话正在使用该服务，它们的标签页将在下次启动时消失。登录数据会保留在磁盘上（可在「设置 > 缓存」中清理）。`
+                : `${openCount} open session(s) use this service. Their tabs will disappear on the next launch. Login data stays on disk and can be cleaned up in Settings > Cache.`)
+            : (isZh
+                ? '该服务的登录数据会保留在磁盘上，以后重新添加同一服务仍可免登录。'
+                : 'Its login data stays on disk, so re-adding the service later keeps you signed in.')
+    };
+    // Anchor the dialog to the management window when it is open
+    const parent = (toolsWin && !toolsWin.isDestroyed())
+        ? toolsWin
+        : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+    // showMessageBoxSync returns the button index (a plain number, NOT an object)
+    const choice = parent ? dialog.showMessageBoxSync(parent, opts) : dialog.showMessageBoxSync(opts);
+    if (choice !== 0) return { ok: false, cancelled: true };
     servicesList.splice(idx, 1);
     rebuildToolMap();
     saveServices();
