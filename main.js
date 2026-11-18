@@ -11,7 +11,7 @@ const { pinyin } = require('pinyin-pro');
 // Our own console.error/warn (JS layer) are unaffected and still print.
 // To restore full Chromium logs for debugging, run:  set MAB_DEBUG=1 ; npm start
 if (!process.env.MAB_DEBUG) {
-  try { app.commandLine.appendSwitch('log-level', '3'); } catch (e) {}
+    try { app.commandLine.appendSwitch('log-level', '3'); } catch (e) { }
 }
 
 // Fixed userData directory, to avoid Electron deriving the path from package.json name/productName.
@@ -220,7 +220,7 @@ function watchServicesFile() {
                     rebuildToolMap();
                     refreshSidebarState();
                     if (toolsWin && !toolsWin.isDestroyed()) {
-                        try { toolsWin.webContents.send('tools-external-reload'); } catch (e) {}
+                        try { toolsWin.webContents.send('tools-external-reload'); } catch (e) { }
                     }
                 }
             }, 300);
@@ -400,33 +400,33 @@ function applyTheme(theme) {
     // separator line at the bottom of the menu bar blends in and is barely visible.
     // In dark mode keep #1e1e1e to merge with the dark sidebar.
     if (mainWindow && mainWindow.setBackgroundColor) {
-        try { mainWindow.setBackgroundColor(theme === 'light' ? '#ECEFF4' : '#1e1e1e'); } catch (e) {}
+        try { mainWindow.setBackgroundColor(theme === 'light' ? '#ECEFF4' : '#1e1e1e'); } catch (e) { }
     }
     // Sync background color of all open content views so theme switching applies immediately
     const bg = theme === 'light' ? '#ECEFF4' : '#1e1e1e';
     views.forEach(entry => {
-        try { entry.view.setBackgroundColor(bg); } catch (e) {}
+        try { entry.view.setBackgroundColor(bg); } catch (e) { }
     });
     if (toolbarView && toolbarView.webContents && !toolbarView.webContents.isDestroyed()) {
         // Keep the toolbar view transparent; the visible row/dropdowns set their own backgrounds via CSS.
-        try { toolbarView.setBackgroundColor('#00000000'); } catch (e) {}
+        try { toolbarView.setBackgroundColor('#00000000'); } catch (e) { }
         toolbarView.webContents.send('theme-changed', theme);
     }
     // Keep the floating find bar in sync with the app theme
     if (findView && !findView.webContents.isDestroyed()) {
-        try { findView.webContents.send('theme-changed', theme); } catch (e) {}
+        try { findView.webContents.send('theme-changed', theme); } catch (e) { }
     }
     // Keep the pronunciation panel in sync with the app theme
     if (pronWin && !pronWin.isDestroyed()) {
-        try { pronWin.webContents.send('theme-changed', theme); } catch (e) {}
+        try { pronWin.webContents.send('theme-changed', theme); } catch (e) { }
     }
     // Keep the AI tools management window in sync with the app theme
     if (toolsWin && !toolsWin.isDestroyed()) {
-        try { toolsWin.webContents.send('theme-changed', theme); } catch (e) {}
+        try { toolsWin.webContents.send('theme-changed', theme); } catch (e) { }
     }
     // Keep the password window in sync with the app theme
     if (lockWin && !lockWin.isDestroyed()) {
-        try { lockWin.webContents.send('theme-changed', theme); } catch (e) {}
+        try { lockWin.webContents.send('theme-changed', theme); } catch (e) { }
     }
 }
 
@@ -637,6 +637,8 @@ function getContentArea() {
     if (!mainWindow) return { x: 0, y: 0, width: 0, height: 0 };
     // Use contentBounds instead of getSize(); the latter includes window borders and would cause content overflow
     const { width, height } = mainWindow.getContentBounds();
+    // Focus mode: the page covers the entire window (no sidebar, no toolbar row)
+    if (focusMode) return { x: 0, y: 0, width, height };
     // Our custom toolbar row sits directly below the native title/menu bar (contentView y=0).
     // Content (sidebar + sessions) starts below the toolbar row.
     return {
@@ -647,12 +649,45 @@ function getContentArea() {
     };
 }
 
+// ---------------- Focus mode (F11): full-screen page, chrome hidden ----------------
+let focusMode = false;
+let focusWasMaximized = false;
+
+function enterFocusMode() {
+    if (!mainWindow || focusMode) return;
+    focusMode = true;
+    focusWasMaximized = mainWindow.isMaximized();
+    mainWindow.setFullScreen(true);
+    layout();
+    const entry = currentViewKey ? views.get(currentViewKey) : null;
+    if (entry) { try { entry.view.webContents.focus(); } catch (e) { } }
+    console.log('[focus] entered');
+}
+
+function exitFocusMode() {
+    if (!mainWindow || !focusMode) return;
+    focusMode = false;
+    mainWindow.setFullScreen(false);
+    layout();
+    if (focusWasMaximized) { try { mainWindow.maximize(); } catch (e) { } }
+    console.log('[focus] exited');
+}
+
+function toggleFocusMode() {
+    if (focusMode) exitFocusMode();
+    else enterFocusMode();
+}
+
 function layout() {
     if (!mainWindow) return;
     const { width, height } = mainWindow.getContentBounds();
     if (sidebarView) {
-        // Sidebar starts below our custom toolbar row (contentView y=0 is already below the native menu bar).
-        sidebarView.setBounds({ x: 0, y: TOOLBAR_H, width: sidebarWidth, height: Math.max(0, height - TOOLBAR_H) });
+        // Focus mode hides the sidebar entirely
+        sidebarView.setVisible(!focusMode);
+        if (!focusMode) {
+            // Sidebar starts below our custom toolbar row (contentView y=0 is already below the native menu bar).
+            sidebarView.setBounds({ x: 0, y: TOOLBAR_H, width: sidebarWidth, height: Math.max(0, height - TOOLBAR_H) });
+        }
     }
     const area = getContentArea();
     // Refresh bounds for every mounted view so none keeps a stale/zero rect that would
@@ -665,6 +700,7 @@ function layout() {
     // Our custom web-toolbar row spans the full content width at contentView y=0.
     if (toolbarView && mainWindow.contentView) {
         mainWindow.contentView.addChildView(toolbarView);
+        toolbarView.setVisible(!focusMode);
         toolbarView.setBounds({ x: 0, y: 0, width, height: TOOLBAR_H });
         // Keep the left placeholder aligned with the sidebar width so the web-tool buttons
         // start exactly where the content area begins (width - sidebarWidth on the right).
@@ -675,7 +711,7 @@ function layout() {
     // Nudge the sidebar's renderer to re-sync its viewport to the bounds. Repeated calls
     // (see kickLayout) are what actually clear the startup blank strip at the bottom.
     if (sidebarView && !sidebarView.webContents.isDestroyed()) {
-        try { sidebarView.webContents.invalidate(); } catch (e) {}
+        try { sidebarView.webContents.invalidate(); } catch (e) { }
     }
 
     // Keep the find bar glued to the top-right of the content area
@@ -699,7 +735,7 @@ h1{color:#ff6b6b;font-size:20px;margin-bottom:12px}
 p{color:#aaa;font-size:13px;line-height:1.6;word-break:break-all}
 </style></head><body><div class="error">
 <h1>⚠️ Failed to load</h1><p>${String(message || 'Please check your network connection or proxy settings')
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
 <p style="color:#666;margin-top:16px">Use View &gt; Reload in the toolbar menu to try again</p>
 </div></body></html>`;
     // Must be encoded, otherwise newlines/quotes would truncate the data URL
@@ -936,7 +972,8 @@ function positionFindBar() {
     // Top-right, just below the toolbar row.
     const { width } = mainWindow.getContentBounds();
     const x = width - FINDBAR_W - 8;
-    const y = TOOLBAR_H + 8;
+    // In focus mode the toolbar row is hidden, so the bar sits right under the top edge
+    const y = (focusMode ? 0 : TOOLBAR_H) + 8;
     findView.setBounds({ x, y, width: FINDBAR_W, height: FINDBAR_H });
 }
 
@@ -957,13 +994,13 @@ function showFindBar(triggerWc = null) {
         findView.webContents.loadFile(path.join(__dirname, 'findbar.html'));
         findView.webContents.on('did-finish-load', () => {
             if (!findView || findView.webContents.isDestroyed()) return;
-            try { findView.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+            try { findView.webContents.send('theme-changed', appConfig.theme); } catch (e) { }
             if (mainWindow && mainWindow.contentView && !findViewAttached()) {
                 mainWindow.contentView.addChildView(findView);
                 findViewAdded = true;
             }
             positionFindBar();
-            try { findView.webContents.focus(); } catch (e) {}
+            try { findView.webContents.focus(); } catch (e) { }
         });
     } else {
         if (mainWindow && mainWindow.contentView && !findViewAttached()) {
@@ -971,9 +1008,9 @@ function showFindBar(triggerWc = null) {
             findViewAdded = true;
         }
         positionFindBar();
-        try { findView.webContents.focus(); } catch (e) {}
+        try { findView.webContents.focus(); } catch (e) { }
         // Pressing Ctrl+F again re-focuses the bar and selects the existing query
-        try { findView.webContents.send('find-focus'); } catch (e) {}
+        try { findView.webContents.send('find-focus'); } catch (e) { }
     }
 }
 
@@ -983,6 +1020,20 @@ function showFindBar(triggerWc = null) {
 function attachFindShortcut(wc, selfIsTarget = true) {
     wc.on('before-input-event', (event, input) => {
         if (input.type !== 'keyDown') return;
+        // Focus mode. Plain F11 is consumed by Chromium's built-in fullscreen shortcut before
+        // before-input-event can see it, so Shift+F11 is the reliable toggle; Esc leaves the
+        // mode (only intercepted while it is active).
+        const key = String(input.key || '');
+        if (key === 'F11' || input.code === 'F11') {
+            event.preventDefault();
+            toggleFocusMode();
+            return;
+        }
+        if (focusMode && (key === 'Escape' || key === 'Esc')) {
+            event.preventDefault();
+            exitFocusMode();
+            return;
+        }
         if (!(input.control || input.meta) || input.alt || input.shift) return;
         if (String(input.key).toLowerCase() !== 'f') return;
         event.preventDefault();
@@ -1000,16 +1051,16 @@ function hideFindBar() {
             if (mainWindow && mainWindow.contentView && findViewAttached()) {
                 mainWindow.contentView.removeChildView(findView);
             }
-        } catch (e) {}
+        } catch (e) { }
         findViewAdded = false;
-        try { findView.webContents.close(); } catch (e) {}
+        try { findView.webContents.close(); } catch (e) { }
         findView = null;
     }
 }
 
 function clearPageFind() {
     if (findActiveWebContents && !findActiveWebContents.isDestroyed()) {
-        try { findActiveWebContents.executeJavaScript(MAB_CLEAR_IMPL); } catch (e) {}
+        try { findActiveWebContents.executeJavaScript(MAB_CLEAR_IMPL); } catch (e) { }
     }
 }
 
@@ -1083,7 +1134,7 @@ function setupWindowHooks() {
     mainWindow.on('focus', () => {
         const entry = currentViewKey && views.get(currentViewKey);
         if (entry && !entry.view.webContents.isDestroyed()) {
-            try { entry.view.webContents.focus(); } catch (e) {}
+            try { entry.view.webContents.focus(); } catch (e) { }
         }
     });
     // The pronunciation panel is a top-level always-on-top window, so hide it whenever
@@ -1093,7 +1144,7 @@ function setupWindowHooks() {
         const focused = BrowserWindow.getFocusedWindow();
         if (focused === pronWin) return;
         if (pronWin && !pronWin.isDestroyed()) {
-            try { pronWin.hide(); } catch (e) {}
+            try { pronWin.hide(); } catch (e) { }
         }
     };
     mainWindow.on('blur', hideFloatersOnLeave);
@@ -1122,11 +1173,11 @@ function switchView(viewKey) {
     if (!entry || !mainWindow) return false;
     // Last line of defence: a protected bookmark tab can never become visible while locked,
     // no matter which path asks for it (startup restore, toolbar, menu, code).
-    if (lockEnabled() && !lockUnlocked && entry.bookmarkId) {
+    if (lockEnabled() && entry.bookmarkId) {
         const guardedBm = bookmarks.find(b => b.id === entry.bookmarkId);
-        if (guardedBm && guardedBm.locked) {
+        if (guardedBm && guardedBm.locked && !unlockedBookmarks.has(guardedBm.id)) {
             console.log('[lock] switchView blocked for protected tab:', viewKey);
-            promptUnlock(() => switchView(viewKey));
+            promptUnlock(() => switchView(viewKey), guardedBm.id);
             return false;
         }
     }
@@ -1145,7 +1196,7 @@ function switchView(viewKey) {
     // (and visually hid) the bar. Re-raise it so an open find bar stays visible and keeps
     // receiving input across view switches.
     if (findBarVisible && findView && !findView.webContents.isDestroyed() && findViewAttached()) {
-        try { mainWindow.contentView.addChildView(findView); } catch (e) {}
+        try { mainWindow.contentView.addChildView(findView); } catch (e) { }
         positionFindBar();
     }
 
@@ -1156,7 +1207,7 @@ function switchView(viewKey) {
     setTimeout(() => {
         if (!entry.view || entry.view.webContents.isDestroyed()) return;
         entry.view.setBounds(getContentArea());
-        try { entry.view.webContents.invalidate(); } catch (e) {}
+        try { entry.view.webContents.invalidate(); } catch (e) { }
     }, 60);
 
     currentViewKey = viewKey;
@@ -1164,9 +1215,9 @@ function switchView(viewKey) {
     // returning to a protected tab resets it.
     if (lockEnabled()) {
         const switchedBm = entry.bookmarkId ? bookmarks.find(b => b.id === entry.bookmarkId) : null;
-        if (switchedBm && switchedBm.locked) {
+        if (switchedBm && switchedBm.locked && unlockedBookmarks.has(switchedBm.id)) {
             protectedIdleSince = 0;
-        } else if (lockUnlocked && !protectedIdleSince) {
+        } else if (unlockedBookmarks.size > 0 && !protectedIdleSince) {
             protectedIdleSince = Date.now();
         }
     }
@@ -1174,7 +1225,7 @@ function switchView(viewKey) {
     // (Ctrl+F and other shortcuts are captured by the view's preload). Without
     // this, a freshly started window may have no focused WebContentsView and
     // Ctrl+F does nothing until the user clicks into the page first.
-    try { entry.view.webContents.focus(); } catch (e) {}
+    try { entry.view.webContents.focus(); } catch (e) { }
     syncTitle();
     notifyRenderer('view-switched', viewKey);
     syncToolbar();
@@ -1194,7 +1245,7 @@ function switchView(viewKey) {
 
     // Keep the custom toolbar row above any content view so it stays visible/clickable
     if (toolbarView && mainWindow.contentView) {
-        try { mainWindow.contentView.addChildView(toolbarView); } catch (e) {}
+        try { mainWindow.contentView.addChildView(toolbarView); } catch (e) { }
         const w = mainWindow.getContentBounds().width;
         toolbarView.setBounds({ x: 0, y: 0, width: w, height: TOOLBAR_H });
     }
@@ -1393,7 +1444,7 @@ function getMenuItems() {
     ];
 
     return {
-        labels: { file: t('File','文件'), view: t('View','视图'), help: t('Help','帮助') },
+        labels: { file: t('File', '文件'), view: t('View', '视图'), help: t('Help', '帮助') },
         file: fileItems,
         view: viewItems,
         help: helpItems
@@ -1545,7 +1596,7 @@ function attachContextMenu(view) {
             { type: 'separator' },
             {
                 label: appConfig.lang === 'zh' ? '复制页面地址' : 'Copy page URL',
-                click: () => { try { clipboard.writeText(wc.getURL()); } catch (e) {} }
+                click: () => { try { clipboard.writeText(wc.getURL()); } catch (e) { } }
             }
         ];
         if (sel) {
@@ -1606,7 +1657,7 @@ async function fetchPhonetics(text) {
         const resp = await new Promise((resolve, reject) => {
             https.get(url, res => {
                 statusCode = res.statusCode;
-                if (res.statusCode !== 200) { 
+                if (res.statusCode !== 200) {
                     let body = '';
                     res.setEncoding('utf8');
                     res.on('data', d => body += d);
@@ -1697,7 +1748,7 @@ async function showPronunciation(wc, x, y, mode) {
 // Safely send IPC to the pronunciation window (no-op if it was closed).
 function pronSend(channel, data) {
     if (pronWin && !pronWin.isDestroyed()) {
-        try { pronWin.webContents.send(channel, data); } catch (e) {}
+        try { pronWin.webContents.send(channel, data); } catch (e) { }
     }
 }
 
@@ -1722,15 +1773,15 @@ function openPronWindow() {
         pronWin.on('closed', () => { pronWin = null; });
         pronWin.webContents.on('did-finish-load', () => {
             if (!pronWin || pronWin.isDestroyed()) return;
-            try { pronWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+            try { pronWin.webContents.send('theme-changed', appConfig.theme); } catch (e) { }
         });
         // When it loses focus (user clicked the page / another app), return keyboard
         // focus to the underlying page so its inputs stay typeable, then hide.
         pronWin.on('blur', () => {
             if (pronActiveWebContents && !pronActiveWebContents.isDestroyed()) {
-                try { pronActiveWebContents.focus(); } catch (e) {}
+                try { pronActiveWebContents.focus(); } catch (e) { }
             }
-            try { pronWin.hide(); } catch (e) {}
+            try { pronWin.hide(); } catch (e) { }
         });
     } catch (e) {
         console.error('[pron] openPronWindow failed:', e);
@@ -1747,7 +1798,7 @@ ipcMain.on('pron-play-tts', (_e, text) => {
 });
 
 ipcMain.on('pron-hide', () => {
-    if (pronWin && !pronWin.isDestroyed()) { try { pronWin.hide(); } catch (e) {} }
+    if (pronWin && !pronWin.isDestroyed()) { try { pronWin.hide(); } catch (e) { } }
 });
 
 function serializeView(key, entry) {
@@ -1841,7 +1892,7 @@ function addSession(toolKey, { notify = true, activate = true, restore = null } 
         const sess = session.fromPartition(partitionName);
         sess.cookies.get({}).then(cookies => {
             console.log(`[persist] restore ${toolKey} (${partitionName}): found ${cookies.length} cookies, url=${restore.url}`);
-        }).catch(() => {});
+        }).catch(() => { });
     }
     const entry = {
         view,
@@ -1981,7 +2032,10 @@ function findBookmarkTab(id) {
 // Unlock state is per-run: restarts, OS lock/suspend and idle time re-lock it.
 // Locking never destroys pages — it only switches away from protected tabs, so unlocking
 // resumes exactly where the user left off (no reload, no lost conversation).
-let lockUnlocked = false;
+// Bookmarks unlocked during this run, tracked per bookmark: unlocking one protected bookmark
+// never unlocks another one. A password prompt records which bookmark it is for.
+const unlockedBookmarks = new Set();
+let lockPendingBookmark = null;
 let lockWin = null;
 let lockWinMode = null;     // 'unlock' | 'set' | 'reset' (current password window purpose)
 let lockPendingAction = null;
@@ -1998,7 +2052,8 @@ function setLockPassword(password) {
     // Enabling protection puts the app back into the locked state, so the very next
     // protected bookmark asks for the password (otherwise a fresh password would appear
     // to have no effect until the next restart).
-    lockUnlocked = false;
+    unlockedBookmarks.clear();
+    lockPendingBookmark = null;
     mabBlurredAt = 0; // typing the new password is activity, don't count the prompt time
     protectedIdleSince = 0;
     hideProtectedTabs();
@@ -2020,7 +2075,8 @@ function verifyLockPassword(password) {
 // Turning the lock off removes the password and every per-bookmark protection flag
 function clearLockPassword() {
     appConfig = saveConfig({ lock: { ...appConfig.lock, enabled: false, hash: '', salt: '' } });
-    lockUnlocked = true;
+    unlockedBookmarks.clear();
+    lockPendingBookmark = null;
     for (const bm of bookmarks) delete bm.locked;
     syncBookmarks();
     syncToolbar();
@@ -2037,10 +2093,11 @@ function toggleBookmarkLock(id) {
     if (!bm) return;
     if (bm.locked) {
         delete bm.locked;
+        unlockedBookmarks.delete(id);
     } else {
         bm.locked = true;
-        // Marking a tab in front as protected leaves it immediately while locked
-        if (!lockUnlocked) hideProtectedTabs();
+        // Marking a tab in front as protected leaves it immediately while it is locked
+        if (!unlockedBookmarks.has(id)) hideProtectedTabs();
     }
     syncBookmarks();
     syncToolbar();
@@ -2052,11 +2109,11 @@ function hideProtectedTabs() {
     const entry = currentViewKey ? views.get(currentViewKey) : null;
     const currentBm = entry && entry.bookmarkId ? bookmarks.find(b => b.id === entry.bookmarkId) : null;
     console.log('[lock] hideProtectedTabs: current=', currentViewKey, 'bm=', currentBm && currentBm.id, 'locked=', !!(currentBm && currentBm.locked));
-    if (!(currentBm && currentBm.locked)) return;
+    if (!(currentBm && currentBm.locked && !unlockedBookmarks.has(currentBm.id))) return;
     const nextKey = [...views.keys()].find((k) => {
         const e = views.get(k);
         const b = e && e.bookmarkId ? bookmarks.find(x => x.id === e.bookmarkId) : null;
-        return !(b && b.locked);
+        return !(b && b.locked && !unlockedBookmarks.has(b.id));
     });
     if (nextKey) {
         switchView(nextKey);
@@ -2069,8 +2126,9 @@ function hideProtectedTabs() {
 }
 
 function lockNow() {
-    if (!lockEnabled() || !lockUnlocked) return false;
-    lockUnlocked = false;
+    if (!lockEnabled() || unlockedBookmarks.size === 0) return false;
+    unlockedBookmarks.clear();
+    lockPendingBookmark = null;
     protectedIdleSince = 0;
     hideProtectedTabs();
     syncToolbar();
@@ -2136,18 +2194,20 @@ function openLockWindow(mode, cb) {
         lockWin = null;
         lockWinMode = null;
         lockPendingAction = null;
+        lockPendingBookmark = null;
     });
     lockWin.loadFile(path.join(__dirname, 'lock.html'), { query: { mode, has: lockEnabled() ? '1' : '0' } });
     lockWin.webContents.on('did-finish-load', () => {
         if (!lockWin || lockWin.isDestroyed()) return;
-        try { lockWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
-        try { lockWin.webContents.send('lang-changed', appConfig.lang); } catch (e) {}
+        try { lockWin.webContents.send('theme-changed', appConfig.theme); } catch (e) { }
+        try { lockWin.webContents.send('lang-changed', appConfig.lang); } catch (e) { }
     });
 }
 
-function promptUnlock(cb) {
-    console.log('[lock] promptUnlock: enabled=', lockEnabled(), 'unlocked=', lockUnlocked);
+function promptUnlock(cb, bookmarkId = null) {
+    console.log('[lock] promptUnlock: enabled=', lockEnabled(), 'unlockedCount=', unlockedBookmarks.size, 'for=', bookmarkId);
     if (!lockEnabled()) { if (cb) cb(); return; }
+    lockPendingBookmark = bookmarkId;
     openLockWindow('unlock', cb);
 }
 
@@ -2166,7 +2226,7 @@ function setupBookmarkLock() {
         mainWindow.on('blur', () => { mabBlurredAt = Date.now(); });
     }
     setInterval(() => {
-        if (!lockEnabled() || !lockUnlocked) return;
+        if (!lockEnabled() || unlockedBookmarks.size === 0) return;
         try {
             const idleMs = appConfig.lock.idleMinutes * 60000;
             // Idle means any of: protected tabs in the background, MAB not focused, or no
@@ -2246,9 +2306,9 @@ function openBookmark(id, { activate = true } = {}) {
     const bm = bookmarks.find(b => b.id === id);
     if (!bm || !mainWindow) return;
     // Protected bookmarks ask for the global password first (once per unlock session)
-    if (isBookmarkProtected(bm) && !lockUnlocked) {
+    if (isBookmarkProtected(bm) && !unlockedBookmarks.has(bm.id)) {
         console.log('[lock] protected bookmark clicked, prompting unlock:', id);
-        promptUnlock(() => openBookmark(id, { activate }));
+        promptUnlock(() => openBookmark(id, { activate }), bm.id);
         return;
     }
     const existing = findBookmarkTab(id);
@@ -2280,7 +2340,7 @@ function closeWebTool(viewKey) {
     if (lockEnabled() && entry.bookmarkId) {
         const bm = bookmarks.find(b => b.id === entry.bookmarkId);
         if (bm && bm.locked) {
-            lockUnlocked = false;
+            unlockedBookmarks.delete(bm.id);
             protectedIdleSince = 0;
             console.log('[lock] protected tab closed, re-locking:', viewKey);
         }
@@ -2315,7 +2375,7 @@ function syncToolbar() {
     }
     notifyToolbar('webtools-sync', list);
     notifyToolbar('webtool-active', currentViewKey);
-    notifyToolbar('lock-state', { enabled: lockEnabled(), unlocked: lockUnlocked });
+    notifyToolbar('lock-state', { enabled: lockEnabled(), unlocked: unlockedBookmarks.size > 0 });
 }
 
 // ---------------- AI tools management window (Settings > AI Tools > Manage) ----------------
@@ -2338,8 +2398,8 @@ function openToolsWindow() {
     toolsWin.on('closed', () => { toolsWin = null; });
     toolsWin.webContents.on('did-finish-load', () => {
         if (toolsWin && !toolsWin.isDestroyed()) {
-            try { toolsWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
-            try { toolsWin.webContents.send('lang-changed', appConfig.lang); } catch (e) {}
+            try { toolsWin.webContents.send('theme-changed', appConfig.theme); } catch (e) { }
+            try { toolsWin.webContents.send('lang-changed', appConfig.lang); } catch (e) { }
         }
     });
 }
@@ -2625,10 +2685,10 @@ function createWindow() {
     toolbarView.setBounds({ x: 0, y: 0, width: mainWindow.getContentBounds().width, height: TOOLBAR_H });
     // Sync toolbar once it is ready; messages sent before this are lost.
     toolbarView.webContents.once('did-finish-load', () => {
-        try { toolbarView.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+        try { toolbarView.webContents.send('theme-changed', appConfig.theme); } catch (e) { }
         syncToolbar();
         syncMenu();
-        try { toolbarView.webContents.send('set-sidebar-width', sidebarWidth); } catch (e) {}
+        try { toolbarView.webContents.send('set-sidebar-width', sidebarWidth); } catch (e) { }
     });
 
     // Ctrl+wheel zoom: zoom-preload.js listens inside the renderer and notifies the main process via
@@ -2693,11 +2753,11 @@ function createWindow() {
         toolbarView = null;
         findView = null;
         if (toolsWin && !toolsWin.isDestroyed()) {
-            try { toolsWin.destroy(); } catch (e) {}
+            try { toolsWin.destroy(); } catch (e) { }
         }
         toolsWin = null;
         if (pronWin && !pronWin.isDestroyed()) {
-            try { pronWin.destroy(); } catch (e) {}
+            try { pronWin.destroy(); } catch (e) { }
         }
         pronWin = null;
         // Force a clean exit on Windows: relying on window-all-closed proved unreliable
@@ -2738,10 +2798,10 @@ function createWindow() {
                     : views.keys().next().value;
                 // A protected bookmark tab must never be restored into view while locked:
                 // pick the first unprotected tab instead (or show nothing when there is none).
-                if (target && lockEnabled() && !lockUnlocked) {
+                if (target && lockEnabled()) {
                     const tEntry = views.get(target);
                     const tBm = tEntry && tEntry.bookmarkId ? bookmarks.find(b => b.id === tEntry.bookmarkId) : null;
-                    if (tBm && tBm.locked) {
+                    if (tBm && tBm.locked && !unlockedBookmarks.has(tBm.id)) {
                         console.log('[lock] startup: active tab is protected, switching away:', target);
                         target = [...views.keys()].find((k) => {
                             const e = views.get(k);
@@ -2761,7 +2821,7 @@ function createWindow() {
         refreshSidebarState();
         // Never restore a protected tab into view before the password is entered
         if (lockEnabled()) {
-            lockUnlocked = false;
+            unlockedBookmarks.clear();
             hideProtectedTabs();
         }
         // Keep the top toolbar in sync with the restored web tools and bookmarks
@@ -2786,7 +2846,7 @@ function createWindow() {
         if (!currentViewKey) return;
         const v = views.get(currentViewKey);
         if (v && v.view && v.view.webContents && !v.view.webContents.isDestroyed()) {
-            try { v.view.webContents.focus(); } catch (e) {}
+            try { v.view.webContents.focus(); } catch (e) { }
         }
     }, 800);
 }
@@ -2878,11 +2938,13 @@ ipcMain.handle('lock-submit', (_e, password) => {
         notifyRenderer('lock-changed', { enabled: false });
         return { ok: true };
     }
-    lockUnlocked = true;
+    // Only the requested bookmark becomes accessible; other protected ones still ask
+    if (lockPendingBookmark) unlockedBookmarks.add(lockPendingBookmark);
+    lockPendingBookmark = null;
     // A successful unlock counts as activity: reset the background/idle timers and bring MAB back
     mabBlurredAt = 0;
     protectedIdleSince = 0;
-    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus(); } catch (e) {}
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus(); } catch (e) { }
     const action = lockPendingAction;
     lockPendingAction = null;
     if (lockWin && !lockWin.isDestroyed()) lockWin.close();
@@ -2950,12 +3012,12 @@ ipcMain.handle('set-config', async (_event, patch) => {
             toolbarView.webContents.send('lang-changed', cfg.lang);
         }
         if (toolsWin && !toolsWin.isDestroyed()) {
-            try { toolsWin.webContents.send('lang-changed', cfg.lang); } catch (e) {}
+            try { toolsWin.webContents.send('lang-changed', cfg.lang); } catch (e) { }
         }
         if (lockWin && !lockWin.isDestroyed()) {
-            try { lockWin.webContents.send('lang-changed', cfg.lang); } catch (e) {}
+            try { lockWin.webContents.send('lang-changed', cfg.lang); } catch (e) { }
         }
-        }
+    }
     return cfg;
 });
 ipcMain.on('reload-view', (_event, viewKey) => {
@@ -3000,7 +3062,7 @@ app.on('before-quit', () => {
     // only hidden (not destroyed) it would keep the app alive after the main window
     // closes, leaving the process (and the npm console) running. Destroy it on quit.
     if (pronWin && !pronWin.isDestroyed()) {
-        try { pronWin.destroy(); } catch (e) {}
+        try { pronWin.destroy(); } catch (e) { }
         pronWin = null;
     }
 });
