@@ -87,6 +87,42 @@ function rebuildToolMap() {
 
 const SERVICES_FILE = () => path.join(getUserDataDir(), 'services.json');
 
+// ---------------- Config backups ----------------
+// Two safety nets for sessions.json (which also holds bookmarks) and services.json:
+//   1. a *.bak copy of the previous good version, restored automatically when the main
+//      file is empty or corrupt;
+//   2. one dated copy per day under backups/, keeping the newest few for manual recovery.
+const BACKUP_DIR = () => path.join(getUserDataDir(), 'backups');
+const BACKUP_KEEP_COUNT = 10; // keep the newest N dated copies per kind (count, not days)
+
+function pruneBackups(kind) {
+    try {
+        const dir = BACKUP_DIR();
+        const files = fs.readdirSync(dir)
+            .filter(f => f.startsWith(kind + '-') && f.endsWith('.json'))
+            .sort(); // dated names sort chronologically
+        while (files.length > BACKUP_KEEP_COUNT) {
+            const old = files.shift();
+            try { fs.unlinkSync(path.join(dir, old)); } catch (e) { /* ignore */ }
+        }
+    } catch (e) { /* nothing to prune */ }
+}
+
+// Archive the current file once per day (no-op if today's copy already exists)
+function dailyBackup(srcFile, kind) {
+    try {
+        if (!fs.existsSync(srcFile)) return;
+        const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        const dest = path.join(BACKUP_DIR(), `${kind}-${day}.json`);
+        if (fs.existsSync(dest)) return;
+        fs.mkdirSync(BACKUP_DIR(), { recursive: true });
+        fs.copyFileSync(srcFile, dest);
+        pruneBackups(kind);
+    } catch (e) {
+        console.error(`[backup] ${kind} daily backup failed:`, e);
+    }
+}
+
 // Load a service list from the given file (defaults to services.json); returns null when the
 // file is missing, corrupt or empty so the caller can seed DEFAULT_SERVICES. Invalid entries
 // are dropped, duplicate keys de-duplicated.
@@ -120,6 +156,15 @@ function loadServicesFile(file) {
 function writeServicesJson(list) {
     const file = SERVICES_FILE();
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Keep the previous version for recovery (mirrors sessions.json.bak), but never let a
+    // corrupt file overwrite the last good backup.
+    try {
+        if (fs.existsSync(file)) {
+            JSON.parse(fs.readFileSync(file, 'utf8'));
+            fs.copyFileSync(file, file + '.bak');
+        }
+    } catch (e) { /* unreadable source: keep the existing backup */ }
+    dailyBackup(file, 'services');
     // tmp + rename, the same atomic pattern as sessions.json
     const tmp = file + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(list, null, 2), 'utf8');
@@ -135,6 +180,14 @@ function saveServices() {
 // services.json does not exist yet but tools.json does, carry its contents over.
 function initServices() {
     servicesList = loadServicesFile();
+    if (!servicesList) {
+        // Fall back to the last good backup before migrating or reseeding
+        servicesList = loadServicesFile(SERVICES_FILE() + '.bak');
+        if (servicesList) {
+            console.log('[services] restored from backup');
+            saveServices();
+        }
+    }
     if (!servicesList) {
         const legacyFile = path.join(getUserDataDir(), 'tools.json');
         if (fs.existsSync(legacyFile)) {
@@ -495,6 +548,8 @@ function saveState() {
         try {
             if (fs.existsSync(file)) fs.copyFileSync(file, file + '.bak');
         } catch (e) { /* backup is best-effort */ }
+        // Plus a dated archive (once per day), so an older copy survives a bad .bak
+        dailyBackup(file, 'sessions');
         // Write to a temp file then rename, to avoid a half-written JSON if power is lost mid-exit
         const tmp = file + '.tmp';
         fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
@@ -2434,6 +2489,10 @@ if (!gotSingleInstanceLock) {
 app.whenReady().then(() => {
     if (!gotSingleInstanceLock) return;
     initServices(); // load services.json (or seed defaults) before any window can render the tool list
+    // Archive the state left by the previous run on the first launch of each day, even if
+    // nothing changes in this session. Guarantees one dated backup per day the app is used.
+    dailyBackup(STATE_FILE(), 'sessions');
+    dailyBackup(SERVICES_FILE(), 'services');
     createWindow();
 
     app.on('activate', () => {
