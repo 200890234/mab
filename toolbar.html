@@ -117,6 +117,7 @@
        keeps the bookmark itself, which is easy to mis-tap if always visible. */
     .tool-btn.bm .x { display: none; }
     .tool-btn.bm:hover .x { display: inline; }
+    .tool-btn .lock { font-size: 9px; opacity: 0.8; }
 
     .add-wrap { position: relative; display: inline-block; flex-shrink: 0; }
     .add-btn {
@@ -206,6 +207,7 @@
     let activeKey = null;
     let editingId = null;   // set while the inline form edits an existing bookmark
     let dragBmId = null;    // bookmark id currently being dragged for reordering
+    let lockState = { enabled: false, unlocked: true }; // bookmark password lock state
 
     function normalizeUrl(u) {
         u = (u || '').trim();
@@ -221,8 +223,15 @@
         for (const bm of bookmarksList) {
             const tab = webTools.find(t => t.bookmarkId === bm.id);
             const btn = document.createElement('button');
+            const protectedBm = !!(lockState.enabled && bm.locked);
             btn.className = 'tool-btn bm' + (tab && tab.key === activeKey ? ' active' : '');
-            btn.title = bm.name + '\n' + bm.url;
+            btn.title = bm.name + '\n' + bm.url + (protectedBm ? '\n🔒 Password protected' : '');
+            if (protectedBm) {
+                const lock = document.createElement('span');
+                lock.className = 'lock';
+                lock.textContent = '🔒';
+                btn.appendChild(lock);
+            }
             const label = document.createElement('span');
             label.className = 'label';
             label.textContent = bm.name;
@@ -331,6 +340,7 @@
     window.toolbarAPI.onWebTools((list) => { webTools = list || []; render(); });
     window.toolbarAPI.onBookmarks((list) => { bookmarksList = list || []; render(); });
     window.toolbarAPI.onActiveWebTool((key) => { activeKey = key; render(); });
+    window.toolbarAPI.onLockState((s) => { if (s) { lockState = s; render(); } });
     // Main process asks to edit a bookmark (from its context menu): prefill the inline form
     window.toolbarAPI.onBookmarkEdit((id, name, url) => {
         if (addForm.classList.contains('show')) return;

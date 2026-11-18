@@ -1,7 +1,8 @@
-const { app, BaseWindow, BrowserWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme, clipboard } = require('electron');
+const { app, BaseWindow, BrowserWindow, WebContentsView, Menu, ipcMain, shell, session, dialog, nativeTheme, clipboard, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const https = require('https');
 const { pinyin } = require('pinyin-pro');
 
@@ -346,20 +347,40 @@ const AUTOSTART_FILE = () => path.join(getUserDataDir(), 'autostart.json');
 const CONFIG_FILE = () => path.join(getUserDataDir(), 'config.json');
 const STATE_VERSION = 1;
 
-// ---------------- App config (language / theme) persistence ----------------
+// ---------------- App config (language / theme / bookmark lock) persistence ----------------
 // Stored in the userData directory alongside login state and sessions.
-const DEFAULT_CONFIG = { lang: 'en', theme: 'dark' };
+const DEFAULT_CONFIG = {
+    lang: 'en',
+    theme: 'dark',
+    lock: { enabled: false, hash: '', salt: '', idleMinutes: 5 }
+};
+
+// Validate the persisted lock settings (a broken file must never half-enable the lock)
+function normalizeLock(raw) {
+    const l = raw && typeof raw === 'object' ? raw : {};
+    const idle = Number(l.idleMinutes);
+    return {
+        enabled: l.enabled === true
+            && typeof l.hash === 'string' && l.hash.length > 0
+            && typeof l.salt === 'string' && l.salt.length > 0,
+        hash: typeof l.hash === 'string' ? l.hash : '',
+        salt: typeof l.salt === 'string' ? l.salt : '',
+        idleMinutes: Number.isFinite(idle) && idle >= 1 && idle <= 120 ? Math.round(idle) : 5
+    };
+}
+
 function loadConfig() {
     try {
         const f = CONFIG_FILE();
-        if (!fs.existsSync(f)) return { ...DEFAULT_CONFIG };
+        if (!fs.existsSync(f)) return { ...DEFAULT_CONFIG, lock: { ...DEFAULT_CONFIG.lock } };
         const cfg = JSON.parse(fs.readFileSync(f, 'utf8'));
         return {
             lang: cfg.lang === 'zh' ? 'zh' : 'en',
-            theme: cfg.theme === 'light' ? 'light' : 'dark'
+            theme: cfg.theme === 'light' ? 'light' : 'dark',
+            lock: normalizeLock(cfg.lock)
         };
     } catch (e) {
-        return { ...DEFAULT_CONFIG };
+        return { ...DEFAULT_CONFIG, lock: { ...DEFAULT_CONFIG.lock } };
     }
 }
 function saveConfig(patch) {
@@ -402,6 +423,10 @@ function applyTheme(theme) {
     // Keep the AI tools management window in sync with the app theme
     if (toolsWin && !toolsWin.isDestroyed()) {
         try { toolsWin.webContents.send('theme-changed', theme); } catch (e) {}
+    }
+    // Keep the password window in sync with the app theme
+    if (lockWin && !lockWin.isDestroyed()) {
+        try { lockWin.webContents.send('theme-changed', theme); } catch (e) {}
     }
 }
 
@@ -1095,6 +1120,16 @@ ipcMain.on('find-hide-bar', () => {
 function switchView(viewKey) {
     const entry = views.get(viewKey);
     if (!entry || !mainWindow) return false;
+    // Last line of defence: a protected bookmark tab can never become visible while locked,
+    // no matter which path asks for it (startup restore, toolbar, menu, code).
+    if (lockEnabled() && !lockUnlocked && entry.bookmarkId) {
+        const guardedBm = bookmarks.find(b => b.id === entry.bookmarkId);
+        if (guardedBm && guardedBm.locked) {
+            console.log('[lock] switchView blocked for protected tab:', viewKey);
+            promptUnlock(() => switchView(viewKey));
+            return false;
+        }
+    }
     if (currentViewKey === viewKey && entry.view.getVisible()) return true;
 
     // Hide the other views (keep them mounted so page state is preserved)
@@ -1125,6 +1160,16 @@ function switchView(viewKey) {
     }, 60);
 
     currentViewKey = viewKey;
+    // Track idle time of protected content: switching away from it starts the timer,
+    // returning to a protected tab resets it.
+    if (lockEnabled()) {
+        const switchedBm = entry.bookmarkId ? bookmarks.find(b => b.id === entry.bookmarkId) : null;
+        if (switchedBm && switchedBm.locked) {
+            protectedIdleSince = 0;
+        } else if (lockUnlocked && !protectedIdleSince) {
+            protectedIdleSince = Date.now();
+        }
+    }
     // Ensure the newly activated view actually receives keyboard events
     // (Ctrl+F and other shortcuts are captured by the view's preload). Without
     // this, a freshly started window may have no focused WebContentsView and
@@ -1316,6 +1361,12 @@ function getMenuItems() {
             disabled: !currentViewKey
         },
         {
+            // English-only by design, independent of the UI language
+            label: 'Lock Now',
+            action: 'lock-now',
+            disabled: !lockEnabled()
+        },
+        {
             label: t('Open services.json', '打开 services.json 配置文件'),
             action: 'open-services-json'
         },
@@ -1355,6 +1406,7 @@ function runMenuAction(action, arg) {
     switch (action) {
         case 'new-session': if (arg) addSession(arg); break;
         case 'open-services-json': openServicesJsonFile(false); break;
+        case 'lock-now': lockNow(); break;
         case 'close-current': {
             const entry = currentViewKey && views.get(currentViewKey);
             if (entry) {
@@ -1425,6 +1477,24 @@ function showCtxPopup(kind, id, x, y) {
                 : { label: t('Open', '打开'), click: () => openBookmark(id) },
             { type: 'separator' },
             { label: t('Edit…', '编辑…'), click: () => notifyToolbar('bookmark-edit', id, bm.name, bm.url) },
+            {
+                // English-only by design (security feature), independent of the UI language.
+                // Not disabled when no password exists: clicking it opens the setup window and
+                // flags this bookmark as soon as the password is saved.
+                label: bm.locked ? 'Remove Password Protection' : 'Require Password',
+                click: () => {
+                    if (!lockEnabled()) {
+                        openLockWindow('set', () => toggleBookmarkLock(id));
+                        return;
+                    }
+                    if (bm.locked) {
+                        // Removing protection always requires the password, even when unlocked
+                        openLockWindow('unprotect', () => toggleBookmarkLock(id));
+                        return;
+                    }
+                    toggleBookmarkLock(id);
+                }
+            },
             { type: 'separator' },
             { label: t('Remove Bookmark', '移除书签'), click: () => removeBookmark(id) }
         ];
@@ -1906,6 +1976,217 @@ function findBookmarkTab(id) {
     return null;
 }
 
+// ---------------- Bookmark password lock ----------------
+// A single global password protects only the bookmarks flagged with `locked: true`.
+// Unlock state is per-run: restarts, OS lock/suspend and idle time re-lock it.
+// Locking never destroys pages — it only switches away from protected tabs, so unlocking
+// resumes exactly where the user left off (no reload, no lost conversation).
+let lockUnlocked = false;
+let lockWin = null;
+let lockWinMode = null;     // 'unlock' | 'set' | 'reset' (current password window purpose)
+let lockPendingAction = null;
+
+function lockEnabled() {
+    const l = appConfig.lock;
+    return !!(l && l.enabled && l.hash && l.salt);
+}
+
+function setLockPassword(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+    appConfig = saveConfig({ lock: { ...appConfig.lock, enabled: true, hash, salt } });
+    // Enabling protection puts the app back into the locked state, so the very next
+    // protected bookmark asks for the password (otherwise a fresh password would appear
+    // to have no effect until the next restart).
+    lockUnlocked = false;
+    mabBlurredAt = 0; // typing the new password is activity, don't count the prompt time
+    protectedIdleSince = 0;
+    hideProtectedTabs();
+    syncToolbar();
+    return true;
+}
+
+function verifyLockPassword(password) {
+    if (!lockEnabled()) return false;
+    try {
+        const actual = crypto.scryptSync(String(password || ''), appConfig.lock.salt, 64);
+        const expected = Buffer.from(appConfig.lock.hash, 'hex');
+        return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+    } catch (e) {
+        return false;
+    }
+}
+
+// Turning the lock off removes the password and every per-bookmark protection flag
+function clearLockPassword() {
+    appConfig = saveConfig({ lock: { ...appConfig.lock, enabled: false, hash: '', salt: '' } });
+    lockUnlocked = true;
+    for (const bm of bookmarks) delete bm.locked;
+    syncBookmarks();
+    syncToolbar();
+    saveStateNow();
+}
+
+function isBookmarkProtected(bm) {
+    return !!(lockEnabled() && bm && bm.locked);
+}
+
+function toggleBookmarkLock(id) {
+    if (!lockEnabled()) return;
+    const bm = bookmarks.find(b => b.id === id);
+    if (!bm) return;
+    if (bm.locked) {
+        delete bm.locked;
+    } else {
+        bm.locked = true;
+        // Marking a tab in front as protected leaves it immediately while locked
+        if (!lockUnlocked) hideProtectedTabs();
+    }
+    syncBookmarks();
+    syncToolbar();
+    saveStateNow();
+}
+
+// If a protected tab is in front, switch to a non-protected one (or blank the content area)
+function hideProtectedTabs() {
+    const entry = currentViewKey ? views.get(currentViewKey) : null;
+    const currentBm = entry && entry.bookmarkId ? bookmarks.find(b => b.id === entry.bookmarkId) : null;
+    console.log('[lock] hideProtectedTabs: current=', currentViewKey, 'bm=', currentBm && currentBm.id, 'locked=', !!(currentBm && currentBm.locked));
+    if (!(currentBm && currentBm.locked)) return;
+    const nextKey = [...views.keys()].find((k) => {
+        const e = views.get(k);
+        const b = e && e.bookmarkId ? bookmarks.find(x => x.id === e.bookmarkId) : null;
+        return !(b && b.locked);
+    });
+    if (nextKey) {
+        switchView(nextKey);
+    } else {
+        for (const e of views.values()) e.view.setVisible(false);
+        currentViewKey = null;
+        syncTitle();
+        notifyRenderer('view-switched', null);
+    }
+}
+
+function lockNow() {
+    if (!lockEnabled() || !lockUnlocked) return false;
+    lockUnlocked = false;
+    protectedIdleSince = 0;
+    hideProtectedTabs();
+    syncToolbar();
+    notifyToolbar('lock-state', { enabled: true, unlocked: false });
+    return true;
+}
+
+function openLockWindow(mode, cb) {
+    lockWinMode = mode;
+    lockPendingAction = typeof cb === 'function' ? cb : null;
+    if (lockWin && !lockWin.isDestroyed()) {
+        // Reuse the window, but reload it so the requested mode / has-password state is right
+        lockWin.loadFile(path.join(__dirname, 'lock.html'), { query: { mode, has: lockEnabled() ? '1' : '0' } });
+        lockWin.show();
+        lockWin.focus();
+        return;
+    }
+    try {
+        lockWin = new BrowserWindow({
+            width: 380,
+            height: 210,
+            resizable: false,
+            minimizable: false,
+            maximizable: false,
+            autoHideMenuBar: true,
+            title: mode === 'set' ? 'Set Bookmark Password' : 'Unlock Bookmarks',
+            // NOTE: no `parent` here — mainWindow is a BaseWindow, and BrowserWindow's `parent`
+            // option requires a BrowserWindow; passing it made window creation throw silently.
+            webPreferences: {
+                preload: path.join(__dirname, 'lock-preload.js'),
+                nodeIntegration: false,
+                contextIsolation: true
+            }
+        });
+    } catch (e) {
+        console.error('[lock] failed to create password window:', e);
+        lockWin = null;
+        return;
+    }
+    lockWin.setBackgroundColor(appConfig.theme === 'light' ? '#ECEFF4' : '#1e1e1e');
+    // Show explicitly once the page is ready (the window has no parent to anchor to)
+    lockWin.once('ready-to-show', () => {
+        if (!lockWin || lockWin.isDestroyed()) return;
+        lockWin.show();
+        lockWin.focus();
+    });
+    lockWin.webContents.on('preload-error', (_e, preloadPath, error) => {
+        console.error('[lock] preload error:', preloadPath, error);
+    });
+    lockWin.webContents.on('console-message', (...args) => {
+        const msg = args[1] && typeof args[1] === 'object' ? args[1].message : args[2];
+        if (msg) console.log('[lock-renderer]', msg);
+    });
+    lockWin.webContents.on('did-fail-load', (_e, code, desc) => {
+        console.error('[lock] password window failed to load:', code, desc);
+    });
+    console.log('[lock] password window created, mode=', mode);
+    lockWin.on('close', () => {
+        console.log('[lock] window close event fired, destroyed=', lockWin && lockWin.isDestroyed());
+    });
+    lockWin.on('closed', () => {
+        console.log('[lock] password window closed. stack:\n' + new Error('closed').stack);
+        lockWin = null;
+        lockWinMode = null;
+        lockPendingAction = null;
+    });
+    lockWin.loadFile(path.join(__dirname, 'lock.html'), { query: { mode, has: lockEnabled() ? '1' : '0' } });
+    lockWin.webContents.on('did-finish-load', () => {
+        if (!lockWin || lockWin.isDestroyed()) return;
+        try { lockWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+        try { lockWin.webContents.send('lang-changed', appConfig.lang); } catch (e) {}
+    });
+}
+
+function promptUnlock(cb) {
+    console.log('[lock] promptUnlock: enabled=', lockEnabled(), 'unlocked=', lockUnlocked);
+    if (!lockEnabled()) { if (cb) cb(); return; }
+    openLockWindow('unlock', cb);
+}
+
+// Timestamp of the last moment MAB lost focus (0 = currently focused). Used so that
+// "idle" also counts time spent in other applications, not just missing keyboard input.
+let mabBlurredAt = 0;
+// Timestamp of the last moment protected content left the foreground (0 = a protected tab
+// is in front, or nothing is unlocked). Keeping protected tabs in the background counts as
+// idle even while the user keeps using MAB elsewhere.
+let protectedIdleSince = 0;
+
+// Idle / session-lock detection: only active while an unlock session is in effect
+function setupBookmarkLock() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.on('focus', () => { mabBlurredAt = 0; });
+        mainWindow.on('blur', () => { mabBlurredAt = Date.now(); });
+    }
+    setInterval(() => {
+        if (!lockEnabled() || !lockUnlocked) return;
+        try {
+            const idleMs = appConfig.lock.idleMinutes * 60000;
+            // Idle means any of: protected tabs in the background, MAB not focused, or no
+            // keyboard/mouse input at all while both are in front.
+            let idleFor = 0;
+            if (mabBlurredAt) idleFor = Date.now() - mabBlurredAt;
+            if (protectedIdleSince) idleFor = Math.max(idleFor, Date.now() - protectedIdleSince);
+            if (!mabBlurredAt && !protectedIdleSince) idleFor = powerMonitor.getSystemIdleTime() * 1000;
+            if (idleFor >= idleMs) {
+                console.log('[lock] auto lock, idle for', Math.round(idleFor / 1000), 's, blurred=', !!mabBlurredAt, 'protectedBg=', !!protectedIdleSince);
+                lockNow();
+            }
+        } catch (e) { /* ignore */ }
+    }, 15000);
+    try {
+        powerMonitor.on('lock-screen', () => lockNow());
+        powerMonitor.on('suspend', () => lockNow());
+    } catch (e) { /* ignore */ }
+}
+
 function syncBookmarks() {
     notifyToolbar('bookmarks-sync', bookmarks);
 }
@@ -1964,6 +2245,12 @@ function removeBookmark(id) {
 function openBookmark(id, { activate = true } = {}) {
     const bm = bookmarks.find(b => b.id === id);
     if (!bm || !mainWindow) return;
+    // Protected bookmarks ask for the global password first (once per unlock session)
+    if (isBookmarkProtected(bm) && !lockUnlocked) {
+        console.log('[lock] protected bookmark clicked, prompting unlock:', id);
+        promptUnlock(() => openBookmark(id, { activate }));
+        return;
+    }
     const existing = findBookmarkTab(id);
     if (existing) {
         if (activate) switchView(existing);
@@ -1987,6 +2274,17 @@ function reorderBookmark(fromId, toId) {
 function closeWebTool(viewKey) {
     const entry = views.get(viewKey);
     if (!entry || entry.toolKey !== 'customWeb') return;
+
+    // Closing a protected bookmark tab re-arms the lock: reopening it asks for the password
+    // again, even without restarting the app.
+    if (lockEnabled() && entry.bookmarkId) {
+        const bm = bookmarks.find(b => b.id === entry.bookmarkId);
+        if (bm && bm.locked) {
+            lockUnlocked = false;
+            protectedIdleSince = 0;
+            console.log('[lock] protected tab closed, re-locking:', viewKey);
+        }
+    }
 
     destroyView(entry);
     views.delete(viewKey);
@@ -2017,6 +2315,7 @@ function syncToolbar() {
     }
     notifyToolbar('webtools-sync', list);
     notifyToolbar('webtool-active', currentViewKey);
+    notifyToolbar('lock-state', { enabled: lockEnabled(), unlocked: lockUnlocked });
 }
 
 // ---------------- AI tools management window (Settings > AI Tools > Manage) ----------------
@@ -2434,9 +2733,23 @@ function createWindow() {
                 if (views.size === 0) {
                     DEFAULT_SESSIONS.forEach(k => addSession(k, { notify: false, activate: false }));
                 }
-                const target = views.has(saved.activeKey)
+                let target = views.has(saved.activeKey)
                     ? saved.activeKey
                     : views.keys().next().value;
+                // A protected bookmark tab must never be restored into view while locked:
+                // pick the first unprotected tab instead (or show nothing when there is none).
+                if (target && lockEnabled() && !lockUnlocked) {
+                    const tEntry = views.get(target);
+                    const tBm = tEntry && tEntry.bookmarkId ? bookmarks.find(b => b.id === tEntry.bookmarkId) : null;
+                    if (tBm && tBm.locked) {
+                        console.log('[lock] startup: active tab is protected, switching away:', target);
+                        target = [...views.keys()].find((k) => {
+                            const e = views.get(k);
+                            const b = e && e.bookmarkId ? bookmarks.find(x => x.id === e.bookmarkId) : null;
+                            return !(b && b.locked);
+                        }) || null;
+                    }
+                }
                 if (target) switchView(target);
             } else {
                 DEFAULT_SESSIONS.forEach(k => addSession(k, { notify: false, activate: false }));
@@ -2446,6 +2759,11 @@ function createWindow() {
         }
         // Push the full state to the renderer in one shot (custom web tools live only in the top toolbar)
         refreshSidebarState();
+        // Never restore a protected tab into view before the password is entered
+        if (lockEnabled()) {
+            lockUnlocked = false;
+            hideProtectedTabs();
+        }
         // Keep the top toolbar in sync with the restored web tools and bookmarks
         syncToolbar();
         syncBookmarks();
@@ -2455,6 +2773,8 @@ function createWindow() {
 
     // Window focus hooks (restore keyboard into the active view, hide floaters on leave)
     setupWindowHooks();
+    // Idle / OS-lock detection for protected bookmarks
+    setupBookmarkLock();
 
     layout();
 
@@ -2541,6 +2861,58 @@ ipcMain.on('show-menu-popup', (_event, type, x, y) => {
 // Every mutation saves the file, rebuilds AI_TOOLS and pushes fresh state to the sidebar,
 // so the session list and File -> New Session menu pick up the change immediately.
 ipcMain.on('open-tools-editor', () => openToolsWindow());
+// Bookmark lock: open the password window, verify / set / reset it
+ipcMain.on('open-lock-settings', () => openLockWindow('set'));
+ipcMain.on('lock-cancel', () => {
+    console.log('[lock] cancel requested from window');
+    if (lockWin && !lockWin.isDestroyed()) lockWin.close();
+});
+ipcMain.handle('lock-submit', (_e, password) => {
+    const verified = verifyLockPassword(password);
+    console.log('[lock] submit: mode=', lockWinMode, 'verified=', verified, 'len=', String(password || '').length);
+    if (!verified) return { ok: false, error: 'wrong' };
+    // Removing protection requires the current password (same verification as unlocking)
+    if (lockWinMode === 'reset') {
+        clearLockPassword();
+        if (lockWin && !lockWin.isDestroyed()) lockWin.close();
+        notifyRenderer('lock-changed', { enabled: false });
+        return { ok: true };
+    }
+    lockUnlocked = true;
+    // A successful unlock counts as activity: reset the background/idle timers and bring MAB back
+    mabBlurredAt = 0;
+    protectedIdleSince = 0;
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus(); } catch (e) {}
+    const action = lockPendingAction;
+    lockPendingAction = null;
+    if (lockWin && !lockWin.isDestroyed()) lockWin.close();
+    syncToolbar();
+    notifyToolbar('lock-state', { enabled: lockEnabled(), unlocked: true });
+    if (action) setTimeout(action, 0);
+    return { ok: true };
+});
+ipcMain.handle('lock-set', (_e, password) => {
+    const p = String(password || '');
+    if (p.length < 4) return { ok: false, error: 'short' };
+    setLockPassword(p);
+    const action = lockPendingAction;
+    lockPendingAction = null;
+    if (lockWin && !lockWin.isDestroyed()) lockWin.close();
+    notifyRenderer('lock-changed', { enabled: true });
+    // Continue the action that opened the setup window (e.g. protect this bookmark)
+    if (action) setTimeout(action, 0);
+    return { ok: true };
+});
+// Removing protection: the settings window switches to an in-place "current password" view
+ipcMain.handle('lock-remove', (_e, password) => {
+    const verified = verifyLockPassword(password);
+    console.log('[lock] remove protection: verified=', verified);
+    if (!verified) return { ok: false, error: 'wrong' };
+    clearLockPassword();
+    if (lockWin && !lockWin.isDestroyed()) lockWin.close();
+    notifyRenderer('lock-changed', { enabled: false });
+    return { ok: true };
+});
 ipcMain.on('tools-open-json', (_e, inFolder) => openServicesJsonFile(!!inFolder));
 ipcMain.handle('tools-get', () => {
     // Re-read the file on every fetch so manual external edits show up even if
@@ -2580,7 +2952,10 @@ ipcMain.handle('set-config', async (_event, patch) => {
         if (toolsWin && !toolsWin.isDestroyed()) {
             try { toolsWin.webContents.send('lang-changed', cfg.lang); } catch (e) {}
         }
-    }
+        if (lockWin && !lockWin.isDestroyed()) {
+            try { lockWin.webContents.send('lang-changed', cfg.lang); } catch (e) {}
+        }
+        }
     return cfg;
 });
 ipcMain.on('reload-view', (_event, viewKey) => {

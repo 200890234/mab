@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+    :root {
+        --bg: #1e1e1e;
+        --text: #d7d7d7;
+        --text-dim: #8a8a8a;
+        --border: #333;
+        --hover: #3a3a3a;
+        --accent: #4a90d9;
+        --danger: #ff6b6b;
+    }
+    html.light {
+        --bg: #ECEFF4;
+        --text: #2a2a2a;
+        --text-dim: #7a828c;
+        --border: #d0d6dd;
+        --hover: #dde3ea;
+        --accent: #2f6fb0;
+        --danger: #d94f4f;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        user-select: none;
+    }
+    .box { width: 320px; }
+    h1 { margin: 0 0 4px; font-size: 14px; }
+    .hint { color: var(--text-dim); font-size: 11px; line-height: 1.5; margin-bottom: 10px; }
+    input {
+        width: 100%;
+        height: 28px;
+        margin-bottom: 6px;
+        padding: 0 8px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        font-size: 12px;
+        outline: none;
+    }
+    input:focus { border-color: var(--accent); }
+    .row { display: flex; gap: 6px; margin-top: 4px; }
+    button {
+        height: 26px;
+        padding: 0 12px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 11px;
+    }
+    button:hover { filter: brightness(1.1); }
+    .primary { background: var(--accent); border-color: var(--accent); color: #fff; flex: 1; }
+    .error { color: var(--danger); font-size: 11px; min-height: 14px; margin-top: 4px; }
+    .link {
+        background: none;
+        border: none;
+        padding: 0;
+        color: var(--text-dim);
+        cursor: pointer;
+        font-size: 10px;
+        text-decoration: underline;
+        margin-top: 8px;
+    }
+    .hidden { display: none; }
+</style>
+</head>
+<body>
+    <div class="box">
+        <h1 id="title">Unlock bookmarks</h1>
+        <div class="hint" id="hint"></div>
+        <input id="pw" type="password" autocomplete="off" />
+        <input id="pw2" type="password" autocomplete="off" class="hidden" />
+        <div class="error" id="err"></div>
+        <div class="row">
+            <button class="primary" id="ok">Unlock</button>
+            <button id="cancel">Cancel</button>
+        </div>
+        <button class="link hidden" id="reset">Remove password protection</button>
+    </div>
+
+<script>
+    const params = new URLSearchParams(location.search);
+    const rawMode = params.get('mode');
+    const mode = (rawMode === 'set' || rawMode === 'reset' || rawMode === 'unprotect') ? rawMode : 'unlock';
+    const hasPassword = params.get('has') === '1';
+    // Set mode can switch in place to "remove protection", which asks for the current password
+    let removing = false;
+
+    const titleEl = document.getElementById('title');
+    const hintEl = document.getElementById('hint');
+    const pwEl = document.getElementById('pw');
+    const pw2El = document.getElementById('pw2');
+    const errEl = document.getElementById('err');
+    const okBtn = document.getElementById('ok');
+    const cancelBtn = document.getElementById('cancel');
+    const resetBtn = document.getElementById('reset');
+
+    // UI text for the bookmark lock is intentionally English-only (security terminology),
+    // independent of the app language setting.
+    const L10N = {
+        titleUnlock:  'Unlock bookmarks',
+        titleSet:     'Bookmark password',
+        titleReset:   'Remove password protection',
+        titleUnprotect: 'Remove password protection',
+        hintUnprotect: 'Enter the current password to remove protection from this bookmark.',
+        hintUnlock:   'Enter the password to open protected bookmarks.',
+        hintSet:      'Protects the bookmarks you flag with "Require password". It re-locks after idle time, while MAB stays in the background, on OS lock or on restart.',
+        hintReset:    'Enter the current password. All protected bookmarks will be unprotected and the password will be cleared.',
+        password:     'Password',
+        confirm:      'Confirm password',
+        unlock:       'Unlock',
+        save:         'Save',
+        cancel:       'Cancel',
+        remove:       'Remove password protection',
+        removeBtn:    'Remove protection',
+        errWrong:     'Incorrect password',
+        errShort:     'Use at least 4 characters',
+        errMismatch:  'Passwords do not match'
+    };
+    const t = (k) => L10N[k] || k;
+
+    function applyText() {
+        document.documentElement.lang = 'en';
+        const isRemove = mode === 'reset' || mode === 'unprotect';
+        titleEl.textContent = mode === 'set' ? t('titleSet')
+            : (mode === 'reset' ? t('titleReset') : (mode === 'unprotect' ? t('titleUnprotect') : t('titleUnlock')));
+        hintEl.textContent = mode === 'set' ? t('hintSet')
+            : (mode === 'reset' ? t('hintReset') : (mode === 'unprotect' ? t('hintUnprotect') : t('hintUnlock')));
+        pwEl.placeholder = t('password');
+        pw2El.placeholder = t('confirm');
+        okBtn.textContent = mode === 'set' ? t('save') : (isRemove ? t('removeBtn') : t('unlock'));
+        cancelBtn.textContent = t('cancel');
+        resetBtn.textContent = t('remove');
+    }
+
+    function showError(key) {
+        errEl.textContent = t(key);
+    }
+
+    pw2El.classList.toggle('hidden', mode !== 'set');
+    resetBtn.classList.toggle('hidden', !(mode === 'set' && hasPassword));
+    applyText();
+    pwEl.focus();
+
+    okBtn.addEventListener('click', async () => {
+        errEl.textContent = '';
+        const pw = pwEl.value;
+        if (removing) {
+            if (!pw) { showError('errWrong'); pwEl.focus(); return; }
+            const r = await window.lockAPI.removeWithPassword(pw);
+            if (!r.ok) { showError('errWrong'); pwEl.value = ''; pwEl.focus(); }
+            return;
+        }
+        if (mode === 'set') {
+            if (pw.length < 4) { showError('errShort'); pwEl.focus(); return; }
+            if (pw !== pw2El.value) { showError('errMismatch'); pw2El.focus(); return; }
+            const r = await window.lockAPI.setPassword(pw);
+            if (!r.ok) { showError(r.error === 'short' ? 'errShort' : 'errWrong'); }
+            return;
+        }
+        const r = await window.lockAPI.submit(pw);
+        if (!r.ok) { showError('errWrong'); pwEl.value = ''; pwEl.focus(); }
+    });
+
+    cancelBtn.addEventListener('click', () => window.lockAPI.cancel());
+
+    resetBtn.addEventListener('click', () => {
+        // Switch this same window into "enter current password to remove protection"
+        removing = true;
+        pw2El.classList.add('hidden');
+        pwEl.value = '';
+        pwEl.placeholder = t('password');
+        titleEl.textContent = t('titleReset');
+        hintEl.textContent = t('hintReset');
+        okBtn.textContent = t('removeBtn');
+        resetBtn.classList.add('hidden');
+        errEl.textContent = '';
+        pwEl.focus();
+    });
+
+    [pwEl, pw2El].forEach((el) => el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') okBtn.click();
+        if (e.key === 'Escape') window.lockAPI.cancel();
+    }));
+
+    window.lockAPI.onThemeChanged((theme) => {
+        document.documentElement.classList.toggle('light', theme === 'light');
+    });
+</script>
+</body>
+</html>

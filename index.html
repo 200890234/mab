@@ -474,6 +474,11 @@
                     <div class="setting-row">
                         <button class="mini-btn" id="btnEditTools" data-i18n="manage" style="flex:1;">Manage AI Services…</button>
                     </div>
+                    <!-- Password lock for toolbar bookmarks flagged as "Require password".
+                         Its labels stay English on purpose, independent of the UI language. -->
+                    <div class="setting-row">
+                        <button class="mini-btn" id="btnBookmarkLock" style="flex:1;">Set password…</button>
+                    </div>
                     <!-- To add more settings later, append a .setting-row following this structure -->
                 </div>
             </div>
@@ -700,6 +705,22 @@
         document.getElementById('btnEditTools').addEventListener('click', () => {
             try { window.electronAPI.openTools(); } catch (e) {}
         });
+
+        // Settings > Bookmark lock: set / change the global password. The label switches to
+        // "Change password…" once a password exists (state also refreshed from the main process).
+        const lockPasswordBtn = document.getElementById('btnBookmarkLock');
+        function setLockButtonState(enabled) {
+            // English-only by design, independent of the UI language setting
+            lockPasswordBtn.textContent = enabled ? 'Change password…' : 'Set password…';
+        }
+        lockPasswordBtn.addEventListener('click', () => {
+            try { window.electronAPI.openLockSettings(); } catch (e) {}
+        });
+        window.electronAPI.onLockChanged((data) => setLockButtonState(!!(data && data.enabled)));
+        // Initial label state (a password may already be configured)
+        window.electronAPI.getConfig()
+            .then((cfg) => setLockButtonState(!!(cfg && cfg.lock && cfg.lock.enabled)))
+            .catch(() => {});
 
         function formatSize(bytes) {
             const n = Number(bytes) || 0;
