@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.7.0
+
+### Bookmark password lock (opt-in)
+- A single global password (scrypt hash + salt stored in `config.json`) can protect individual toolbar bookmarks: right-click a bookmark → `Require Password`, or click it without a password first to open the setup window.
+- Opening a protected bookmark asks for the password; protected tabs are never restored into view while locked, not even after a restart.
+- The app re-locks itself after idle time, when MAB stays in the background, when protected tabs are in the background, on OS lock/suspend, via `File > Lock Now`, on restart and when a protected tab is closed.
+- Unlock state is tracked per bookmark: unlocking one protected bookmark never unlocks another.
+- Locking never destroys pages — unlocking resumes exactly where you left off.
+- Removing protection (per bookmark or globally) requires the current password. Forgetting it means editing `config.json`; everything else keeps working and nothing is lost.
+- Its UI strings are intentionally English-only, independent of the UI language.
+
+### Focus mode
+- `Shift+F11` switches a distraction-free full-screen mode (sidebar and toolbar hidden, page fills the window); `Esc` leaves it. Plain `F11` is reserved by Chromium's own fullscreen shortcut.
+- The find bar moves to the top edge in focus mode.
+
+### Downloads
+- Page downloads are now tracked: Chromium's own save dialog is kept (exactly one prompt), and every download appears in a new downloads window (`⤓` in the toolbar) with live progress, cancel, open and show-in-folder.
+- Download history persists across restarts in `downloads.json`; entries interrupted by an exit are restored as interrupted. Names follow the file you actually saved.
+
+### Page context menu
+- Right-clicking a link now offers `Copy Link Address` and `Open Link in New Tab`; right-clicking an image offers `Copy Image Address`. The existing menu (back/forward/reload/copy/paste, devtools, `Copy page URL`, pronunciation/read-aloud) is unchanged.
+
+### UI and layout
+- The top-bar language toggle is hidden; language switching stays in the settings panel (it is a low-frequency action).
+- Toolbar labels are 13px with line-height 1.4, so descenders (`g`, `p`, `y`) are no longer clipped.
+- Re-layout after full-screen transitions and after a resize drag settles, then nudge the window 1px so Windows refreshes the right/bottom resize handles.
+- Configuration backups: `.bak` plus dated archives (10 kept) for sessions and services.
+
 ## v1.6.10
 - Removing a service in `Manage AI Services` now always asks for confirmation. Previously the dialog only appeared when the service had open sessions, so a single click could delete a service by accident. The dialog defaults to Cancel and follows the UI language.
 
