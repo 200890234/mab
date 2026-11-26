@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.7.1
+
+### Improvements
+- Bookmarks can now be organized into single-level groups ("folders"). A `📁 Groups` button pinned to the left of the bookmark row lists every group; hovering a group cascades into its bookmarks, and each bookmark cascades into open/focus, close tab, edit and remove. Nothing changes for existing profiles: bookmarks without a group stay pinned in the row exactly as before, and older `sessions.json` files are read as fully ungrouped.
+- The new-bookmark form (`+`) gained a group selector, so a bookmark can be created straight into a group. Editing an existing bookmark pre-fills its current group and lets you move it.
+- Group names are entered in a small dedicated window (create / rename). Groups can be renamed or deleted from the group menu; deleting a group returns its bookmarks to the ungrouped row instead of removing them.
+
+### Fixes
+- Fixed the bookmark context menu appearing towards the bottom-right corner on non-maximized windows.
+- Fixed a tab opened from a grouped bookmark having no close entry: the group menu now offers `Close Tab` for open bookmarks.
+
 ## v1.7.0
 
 ### Bookmark password lock (opt-in)
