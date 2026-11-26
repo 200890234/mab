@@ -181,6 +181,7 @@
     </div>
     <div class="tb-right">
         <div class="tools" id="tools"></div>
+        <button class="add-btn" id="btnDownloads" title="Downloads">⤓</button>
         <div class="add-wrap">
             <button class="add-btn" id="addBtn" title="添加网页工具">+</button>
             <div class="add-form" id="addForm">
@@ -342,6 +343,7 @@
     window.toolbarAPI.onBookmarks((list) => { bookmarksList = list || []; render(); });
     window.toolbarAPI.onActiveWebTool((key) => { activeKey = key; render(); });
     window.toolbarAPI.onLockState((s) => { if (s) { lockState = s; render(); } });
+    document.getElementById('btnDownloads').addEventListener('click', () => window.toolbarAPI.openDownloads());
     // Main process asks to edit a bookmark (from its context menu): prefill the inline form
     window.toolbarAPI.onBookmarkEdit((id, name, url) => {
         if (addForm.classList.contains('show')) return;

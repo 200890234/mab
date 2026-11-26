@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('toolbarAPI', {
     onWebTools: (cb) => ipcRenderer.on('webtools-sync', (_e, list) => cb(list)),
     onActiveWebTool: (cb) => ipcRenderer.on('webtool-active', (_e, key) => cb(key)),
     onLockState: (cb) => ipcRenderer.on('lock-state', (_e, state) => cb(state)),
+    openDownloads: () => ipcRenderer.send('open-downloads'),
     addWebTool: (url, name) => ipcRenderer.send('add-webtool', url, name),
     switchWebTool: (key) => ipcRenderer.send('switch-webtool', key),
     closeWebTool: (key) => ipcRenderer.send('close-webtool', key),

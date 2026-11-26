@@ -46,6 +46,9 @@ let toolbarView = null;
 
 // Height of our custom web-toolbar row (sits just below the native title/menu bar, on its own row).
 const TOOLBAR_H = 30;
+// Kept at 0: reserving a visible strip at the right/bottom edge only made the window border
+// look thicker without fixing the resize hit-test (see the nudge in the resize handler).
+const RESIZE_GUTTER = 0;
 
 
 /** @type {Map<string, {view: WebContentsView, toolKey: string, name: string, partition: string}>} */
@@ -428,6 +431,10 @@ function applyTheme(theme) {
     if (lockWin && !lockWin.isDestroyed()) {
         try { lockWin.webContents.send('theme-changed', theme); } catch (e) { }
     }
+    // Keep the downloads window in sync with the app theme
+    if (downloadsWin && !downloadsWin.isDestroyed()) {
+        try { downloadsWin.webContents.send('theme-changed', theme); } catch (e) { }
+    }
 }
 
 // Auto-start preference (separate file, to avoid mixing with sessions)
@@ -638,14 +645,14 @@ function getContentArea() {
     // Use contentBounds instead of getSize(); the latter includes window borders and would cause content overflow
     const { width, height } = mainWindow.getContentBounds();
     // Focus mode: the page covers the entire window (no sidebar, no toolbar row)
-    if (focusMode) return { x: 0, y: 0, width, height };
+    if (focusMode) return { x: 0, y: 0, width: Math.max(0, width - RESIZE_GUTTER), height: Math.max(0, height - RESIZE_GUTTER) };
     // Our custom toolbar row sits directly below the native title/menu bar (contentView y=0).
     // Content (sidebar + sessions) starts below the toolbar row.
     return {
         x: sidebarWidth,
         y: TOOLBAR_H,
-        width: Math.max(0, width - sidebarWidth),
-        height: Math.max(0, height - TOOLBAR_H)
+        width: Math.max(0, width - sidebarWidth - RESIZE_GUTTER),
+        height: Math.max(0, height - TOOLBAR_H - RESIZE_GUTTER)
     };
 }
 
@@ -668,8 +675,14 @@ function exitFocusMode() {
     if (!mainWindow || !focusMode) return;
     focusMode = false;
     mainWindow.setFullScreen(false);
-    layout();
-    if (focusWasMaximized) { try { mainWindow.maximize(); } catch (e) { } }
+    // setFullScreen(false) is async: layout() here would use the still-full-screen bounds and
+    // leave views overlapping the window's right/bottom resize border (no double-arrow cursor).
+    // Re-layout after the bounds settle, and again after restore-to-maximized.
+    setTimeout(() => { if (mainWindow) layout(); }, 60);
+    if (focusWasMaximized) {
+        try { mainWindow.maximize(); } catch (e) { }
+        setTimeout(() => { if (mainWindow) layout(); }, 120);
+    }
     console.log('[focus] exited');
 }
 
@@ -686,7 +699,7 @@ function layout() {
         sidebarView.setVisible(!focusMode);
         if (!focusMode) {
             // Sidebar starts below our custom toolbar row (contentView y=0 is already below the native menu bar).
-            sidebarView.setBounds({ x: 0, y: TOOLBAR_H, width: sidebarWidth, height: Math.max(0, height - TOOLBAR_H) });
+            sidebarView.setBounds({ x: 0, y: TOOLBAR_H, width: sidebarWidth, height: Math.max(0, height - TOOLBAR_H - RESIZE_GUTTER) });
         }
     }
     const area = getContentArea();
@@ -701,7 +714,7 @@ function layout() {
     if (toolbarView && mainWindow.contentView) {
         mainWindow.contentView.addChildView(toolbarView);
         toolbarView.setVisible(!focusMode);
-        toolbarView.setBounds({ x: 0, y: 0, width, height: TOOLBAR_H });
+        toolbarView.setBounds({ x: 0, y: 0, width: Math.max(0, width - RESIZE_GUTTER), height: TOOLBAR_H });
         // Keep the left placeholder aligned with the sidebar width so the web-tool buttons
         // start exactly where the content area begins (width - sidebarWidth on the right).
         if (!toolbarView.webContents.isDestroyed()) {
@@ -764,6 +777,9 @@ function createView(tool, partitionName, initialURL) {
     // page must have keyboard focus — the window 'focus' hook (setupWindowHooks) restores
     // it automatically when the window comes back to front.
     attachFindShortcut(wc);
+    // Track downloads for this partition (registered once per session). The save dialog is
+    // Chromium's own: we only record progress, never open a second dialog.
+    ensureDownloadWatcher(wc.session);
 
     // Ctrl+wheel zoom is listened for inside the renderer by zoom-preload.js and reported to the
     // main process via 'zoom-wheel'; this is more reliable than the main process listening to
@@ -1247,7 +1263,7 @@ function switchView(viewKey) {
     if (toolbarView && mainWindow.contentView) {
         try { mainWindow.contentView.addChildView(toolbarView); } catch (e) { }
         const w = mainWindow.getContentBounds().width;
-        toolbarView.setBounds({ x: 0, y: 0, width: w, height: TOOLBAR_H });
+        toolbarView.setBounds({ x: 0, y: 0, width: Math.max(0, w - RESIZE_GUTTER), height: TOOLBAR_H });
     }
     return true;
 }
@@ -1568,7 +1584,29 @@ function attachContextMenu(view) {
 
     wc.on('context-menu', (_e, params) => {
         const sel = (params.selectionText || '').trim();
-        const tpl = [
+        const tpl = [];
+        // Link / image actions first, worded so they cannot be confused with "Copy page URL"
+        if (params.linkURL) {
+            tpl.push({
+                label: appConfig.lang === 'zh' ? '复制链接地址' : 'Copy Link Address',
+                click: () => { try { clipboard.writeText(params.linkURL); } catch (e) { } }
+            });
+            if (/^https?:/i.test(params.linkURL)) {
+                tpl.push({
+                    label: appConfig.lang === 'zh' ? '在新标签页打开链接' : 'Open Link in New Tab',
+                    click: () => addWebTool(params.linkURL, null, { activate: true })
+                });
+            }
+            tpl.push({ type: 'separator' });
+        }
+        if (params.mediaType === 'image' && params.srcURL) {
+            tpl.push({
+                label: appConfig.lang === 'zh' ? '复制图片地址' : 'Copy Image Address',
+                click: () => { try { clipboard.writeText(params.srcURL); } catch (e) { } }
+            });
+            tpl.push({ type: 'separator' });
+        }
+        tpl.push(
             {
                 label: 'Back',
                 enabled: wc.canGoBack(),
@@ -1598,7 +1636,7 @@ function attachContextMenu(view) {
                 label: appConfig.lang === 'zh' ? '复制页面地址' : 'Copy page URL',
                 click: () => { try { clipboard.writeText(wc.getURL()); } catch (e) { } }
             }
-        ];
+        );
         if (sel) {
             tpl.push({ type: 'separator' });
             // "Pronunciation" only makes sense for a word (phonetic lookup)
@@ -2365,6 +2403,230 @@ function notifyToolbar(channel, ...args) {
     }
 }
 
+// ---------------- Downloads ----------------
+// Every content view lives in its own partition (session), so the watcher is attached once
+// per session. Progress events are throttled before being pushed to the downloads window.
+const downloadSessions = new Set();        // registered partition names
+const downloadSessionsByIdentity = new Set(); // fallback when a session has no partition name
+const downloads = [];       // newest first: { id, name, url, state, received, total, savePath, startedAt, item }
+const DOWNLOADS_FILE = () => path.join(getUserDataDir(), 'downloads.json');
+const DOWNLOADS_KEEP = 100;
+let downloadSeq = 0;
+let downloadsWin = null;
+
+// Restore the download history. Anything still "progressing" when the app exited can never
+// resume (Electron has no resume support), so it is restored as interrupted.
+function loadDownloads() {
+    try {
+        const f = DOWNLOADS_FILE();
+        if (!fs.existsSync(f)) return;
+        const raw = JSON.parse(fs.readFileSync(f, 'utf8'));
+        const items = raw && Array.isArray(raw.items) ? raw.items : [];
+        for (const it of items) {
+            if (!it || typeof it.id !== 'string' || typeof it.name !== 'string') continue;
+            downloads.push({
+                id: it.id,
+                name: it.name,
+                url: typeof it.url === 'string' ? it.url : '',
+                state: it.state === 'completed' ? 'completed' : (it.state === 'cancelled' ? 'cancelled' : 'interrupted'),
+                received: Number(it.received) || 0,
+                total: Number(it.total) || 0,
+                savePath: typeof it.savePath === 'string' ? it.savePath : '',
+                startedAt: Number(it.startedAt) || Date.now(),
+                item: null
+            });
+        }
+        if (downloads.length > DOWNLOADS_KEEP) downloads.length = DOWNLOADS_KEEP;
+        // Keep the id counter ahead of restored ids
+        for (const it of downloads) {
+            const n = parseInt(String(it.id).replace(/^dl-/, ''), 10);
+            if (Number.isFinite(n) && n > downloadSeq) downloadSeq = n;
+        }
+    } catch (e) {
+        console.error('[downloads] load failed:', e);
+    }
+}
+
+// Cheap atomic write (same tmp+rename pattern as sessions.json). Called only on structural
+// changes (path chosen, finished, cancelled, cleared) — never from progress updates.
+function saveDownloads() {
+    try {
+        const f = DOWNLOADS_FILE();
+        fs.mkdirSync(path.dirname(f), { recursive: true });
+        const data = {
+            version: 1,
+            items: downloads.slice(0, DOWNLOADS_KEEP).map(d => ({
+                id: d.id,
+                name: d.name,
+                url: d.url,
+                state: d.state,
+                received: d.received,
+                total: d.total,
+                savePath: d.savePath,
+                startedAt: d.startedAt
+            }))
+        };
+        const tmp = f + '.tmp';
+        fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+        fs.renameSync(tmp, f);
+    } catch (e) {
+        console.error('[downloads] save failed:', e);
+    }
+}
+
+function downloadsPayload() {
+    return downloads.map(d => {
+        // Prefer the name the file was actually saved as: getFilename() only reports the
+        // server-provided name and ignores a rename in the save dialog.
+        let displayName = d.name;
+        if (d.savePath) {
+            try {
+                const base = path.basename(d.savePath);
+                if (base) displayName = base;
+            } catch (e) { /* keep the server name */ }
+        }
+        return {
+            id: d.id,
+            name: displayName,
+            originalName: d.name,
+            url: d.url,
+            state: d.state,
+            received: d.received,
+            total: d.total,
+            savePath: d.savePath,
+            startedAt: d.startedAt
+        };
+    });
+}
+
+function pushDownloads() {
+    if (!downloadsWin || downloadsWin.isDestroyed()) return;
+    try { downloadsWin.webContents.send('downloads-state', downloadsPayload()); } catch (e) { /* ignore */ }
+}
+
+function ensureDownloadWatcher(sess) {
+    if (!sess) return;
+    // Key by partition name: session objects are not guaranteed to be identical wrappers,
+    // so an object-keyed Set could register the same partition twice (two save dialogs).
+    let partition = '';
+    try {
+        partition = typeof sess.getPartition === 'function' ? (sess.getPartition() || '') : '';
+    } catch (e) { partition = ''; }
+    if (partition) {
+        if (downloadSessions.has(partition)) return;
+        downloadSessions.add(partition);
+    } else {
+        // No partition name: dedupe by the session object, otherwise every session would
+        // collapse into the same empty key and only the first one would get a listener.
+        if (downloadSessionsByIdentity.has(sess)) return;
+        downloadSessionsByIdentity.add(sess);
+    }
+
+    sess.on('will-download', (_event, item) => {
+        const url = item.getURL();
+        const now = Date.now();
+        // One click can emit twice (the link plus a window.open target). Suppress a duplicate
+        // download of the same URL that arrived right after an active one.
+        const duplicate = downloads.find(d => d.url === url && d.state === 'progressing' && now - d.startedAt < 2000);
+        if (duplicate) {
+            console.log('[download] duplicate suppressed:', url);
+            try { item.cancel(); } catch (e) { }
+            return;
+        }
+        const id = 'dl-' + (++downloadSeq);
+        const name = item.getFilename() || 'download';
+        const entry = {
+            id,
+            name,
+            url: item.getURL(),
+            state: 'progressing',
+            received: 0,
+            total: item.getTotalBytes(),
+            savePath: '',
+            startedAt: Date.now(),
+            item
+        };
+        downloads.unshift(entry);
+        if (downloads.length > DOWNLOADS_KEEP) downloads.length = DOWNLOADS_KEEP;
+
+        // Do NOT pause or set the save path here: without a save path Chromium shows its own
+        // save dialog, and pausing a (possibly redirecting) download made it fail silently.
+        try {
+            item.setSaveDialogOptions({
+                title: 'Save file',
+                defaultPath: path.join(app.getPath('downloads'), name)
+            });
+        } catch (e) { /* older Electron versions ignore this */ }
+        console.log('[download] start:', name, url);
+
+        let lastPush = 0;
+        item.on('updated', (_e, state) => {
+            entry.received = item.getReceivedBytes();
+            entry.total = item.getTotalBytes();
+            try {
+                const savePath = item.getSavePath();
+                if (savePath) entry.savePath = savePath;
+            } catch (e) { /* ignore */ }
+            if (state === 'interrupted') entry.state = 'interrupted';
+            const now = Date.now();
+            if (now - lastPush > 300) { lastPush = now; pushDownloads(); }
+        });
+        item.on('done', (_e, state) => {
+            entry.state = state; // completed | cancelled | interrupted
+            entry.received = item.getReceivedBytes();
+            entry.total = item.getTotalBytes() || entry.received;
+            try {
+                const savePath = item.getSavePath();
+                if (savePath) entry.savePath = savePath;
+            } catch (e) { /* ignore */ }
+            entry.item = null;
+            console.log('[download] done:', name, state, entry.savePath);
+            pushDownloads();
+            saveDownloads();
+        });
+    });
+}
+
+function openDownloadsWindow() {
+    if (downloadsWin && !downloadsWin.isDestroyed()) {
+        downloadsWin.show();
+        downloadsWin.focus();
+        return;
+    }
+    downloadsWin = new BrowserWindow({
+        width: 520,
+        height: 420,
+        minWidth: 420,
+        minHeight: 260,
+        autoHideMenuBar: true,
+        title: 'Downloads',
+        webPreferences: {
+            preload: path.join(__dirname, 'downloads-preload.js'),
+            nodeIntegration: false,
+            contextIsolation: true
+        }
+    });
+    downloadsWin.setBackgroundColor(appConfig.theme === 'light' ? '#ECEFF4' : '#1e1e1e');
+    downloadsWin.webContents.on('preload-error', (_e, preloadPath, error) => {
+        console.error('[downloads] preload error:', preloadPath, error);
+    });
+    downloadsWin.webContents.on('console-message', (...args) => {
+        const msg = args[1] && typeof args[1] === 'object' ? args[1].message : args[2];
+        if (msg) console.log('[downloads-renderer]', msg);
+    });
+    downloadsWin.webContents.on('did-fail-load', (_e, code, desc) => {
+        console.error('[downloads] window failed to load:', code, desc);
+    });
+    downloadsWin.loadFile(path.join(__dirname, 'downloads.html'));
+    downloadsWin.on('closed', () => { downloadsWin = null; });
+    downloadsWin.webContents.on('did-finish-load', () => {
+        if (!downloadsWin || downloadsWin.isDestroyed()) return;
+        try { downloadsWin.webContents.send('theme-changed', appConfig.theme); } catch (e) { }
+        try { downloadsWin.webContents.send('lang-changed', appConfig.lang); } catch (e) { }
+        pushDownloads();
+    });
+}
+
 function syncToolbar() {
     if (!toolbarView || toolbarView.webContents.isDestroyed()) return;
     const list = [];
@@ -2682,7 +2944,7 @@ function createWindow() {
     // Ensure the toolbar is a child view from the start (layout() re-adds it on top as needed)
     try { mainWindow.contentView.addChildView(toolbarView); } catch (e) { console.error('[toolbar] addChildView failed:', e); }
     // Give it an initial position/size at the top of the content area (below the native menu bar).
-    toolbarView.setBounds({ x: 0, y: 0, width: mainWindow.getContentBounds().width, height: TOOLBAR_H });
+    toolbarView.setBounds({ x: 0, y: 0, width: Math.max(0, mainWindow.getContentBounds().width - RESIZE_GUTTER), height: TOOLBAR_H });
     // Sync toolbar once it is ready; messages sent before this are lost.
     toolbarView.webContents.once('did-finish-load', () => {
         try { toolbarView.webContents.send('theme-changed', appConfig.theme); } catch (e) { }
@@ -2700,13 +2962,43 @@ function createWindow() {
         wc.setZoomLevel(lvl + delta);
     });
 
-    mainWindow.on('resize', () => { layout(); scheduleSave(); });
+    // Windows keeps a stale non-client hit-test after child WebContentsViews are re-laid out for
+    // a new size: the right/bottom edge stops showing the resize cursor after the first manual
+    // resize. A 1px width round-trip after the drag ends is invisible but forces the OS to
+    // refresh the frame region, restoring the resize handles on both edges.
+    let resizeNudgeTimer = null;
+    let lastNudgeAt = 0;
+    mainWindow.on('resize', () => {
+        layout();
+        scheduleSave();
+        // During a drag getContentBounds() can still report the previous size, leaving views a
+        // little larger than the window and covering the resize border of that edge. Re-layout
+        // once the drag settles, then nudge the window 1px so Windows refreshes the hit-test.
+        const now = Date.now();
+        if (now - lastNudgeAt < 600) return; // ignore resize events caused by the nudge itself
+        clearTimeout(resizeNudgeTimer);
+        resizeNudgeTimer = setTimeout(() => {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
+            layout();
+            if (mainWindow.isMaximized() || mainWindow.isFullScreen() || focusMode) return;
+            try {
+                const b = mainWindow.getBounds();
+                lastNudgeAt = Date.now();
+                mainWindow.setBounds({ x: b.x, y: b.y, width: b.width + 1, height: b.height });
+                mainWindow.setBounds(b);
+            } catch (e) { /* ignore */ }
+        }, 350);
+    });
     mainWindow.on('move', () => {
         saveStateNow();
         if (findView && !findView.webContents.isDestroyed()) positionFindBar();
     });
     mainWindow.on('maximize', layout);
     mainWindow.on('unmaximize', layout);
+    // Full-screen transitions are the main source of stale view bounds (right/bottom resize
+    // border stops responding). Re-layout once the OS has finished changing the window state.
+    mainWindow.on('enter-full-screen', () => setTimeout(() => { if (mainWindow) layout(); }, 60));
+    mainWindow.on('leave-full-screen', () => setTimeout(() => { if (mainWindow) layout(); }, 60));
     // Re-layout when the window is restored from minimized / shown again (e.g. after lock screen).
     // Without this the WebContentsView bounds can stay stale and the content area appears blank
     // until the next manual resize.
@@ -2868,11 +3160,21 @@ if (!gotSingleInstanceLock) {
 
 app.whenReady().then(() => {
     if (!gotSingleInstanceLock) return;
+    // Attach the download watcher to every session as webContents are created. Doing it here
+    // (instead of only in createView) guarantees that whatever session performs the download
+    // has a listener, including chrome views and future views.
+    app.on('web-contents-created', (_e, contents) => {
+        try { ensureDownloadWatcher(contents.session); } catch (err) { console.error('[download] attach failed:', err); }
+    });
+    app.on('session-created', (ses) => {
+        try { ensureDownloadWatcher(ses); } catch (err) { console.error('[download] attach failed:', err); }
+    });
     initServices(); // load services.json (or seed defaults) before any window can render the tool list
     // Archive the state left by the previous run on the first launch of each day, even if
     // nothing changes in this session. Guarantees one dated backup per day the app is used.
     dailyBackup(STATE_FILE(), 'sessions');
     dailyBackup(SERVICES_FILE(), 'services');
+    loadDownloads(); // restore download history (unfinished entries become interrupted)
     createWindow();
 
     app.on('activate', () => {
@@ -2965,6 +3267,29 @@ ipcMain.handle('lock-set', (_e, password) => {
     if (action) setTimeout(action, 0);
     return { ok: true };
 });
+// Downloads
+ipcMain.on('open-downloads', () => openDownloadsWindow());
+ipcMain.handle('downloads-get', () => downloadsPayload());
+ipcMain.on('download-cancel', (_e, id) => {
+    const d = downloads.find(x => x.id === id);
+    if (d && d.item) { try { d.item.cancel(); } catch (e) { } }
+});
+ipcMain.on('download-open', (_e, id) => {
+    const d = downloads.find(x => x.id === id);
+    if (d && d.savePath) shell.openPath(d.savePath).catch(() => { });
+});
+ipcMain.on('download-show', (_e, id) => {
+    const d = downloads.find(x => x.id === id);
+    if (d && d.savePath) shell.showItemInFolder(d.savePath);
+});
+ipcMain.on('downloads-clear', () => {
+    for (let i = downloads.length - 1; i >= 0; i--) {
+        if (downloads[i].state !== 'progressing') downloads.splice(i, 1);
+    }
+    pushDownloads();
+    saveDownloads();
+});
+
 // Removing protection: the settings window switches to an in-place "current password" view
 ipcMain.handle('lock-remove', (_e, password) => {
     const verified = verifyLockPassword(password);
@@ -3016,6 +3341,9 @@ ipcMain.handle('set-config', async (_event, patch) => {
         }
         if (lockWin && !lockWin.isDestroyed()) {
             try { lockWin.webContents.send('lang-changed', cfg.lang); } catch (e) { }
+        }
+        if (downloadsWin && !downloadsWin.isDestroyed()) {
+            try { downloadsWin.webContents.send('lang-changed', cfg.lang); } catch (e) { }
         }
     }
     return cfg;

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+    :root {
+        --bg: #1e1e1e;
+        --panel: #262626;
+        --text: #d7d7d7;
+        --text-dim: #8a8a8a;
+        --border: #333;
+        --hover: #3a3a3a;
+        --accent: #4a90d9;
+        --danger: #ff6b6b;
+        --ok: #3ba55d;
+    }
+    html.light {
+        --bg: #ECEFF4;
+        --panel: #f6f8fa;
+        --text: #2a2a2a;
+        --text-dim: #6b747e;
+        --border: #d0d6dd;
+        --hover: #dde3ea;
+        --accent: #2f6fb0;
+        --danger: #d94f4f;
+        --ok: #2f8a4c;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+        font-size: 12px;
+        user-select: none;
+    }
+    .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+    .header h1 { margin: 0; font-size: 13px; font-weight: 600; }
+    .header button, .item button {
+        height: 24px;
+        padding: 0 10px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 11px;
+    }
+    .header button:hover, .item button:hover { filter: brightness(1.12); }
+    .list { flex: 1; overflow-y: auto; padding: 10px 14px; }
+    .empty { color: var(--text-dim); text-align: center; padding: 40px 0; font-size: 12px; }
+    .item {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+    }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { color: var(--text-dim); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+    .bar {
+        height: 5px;
+        background: var(--hover);
+        border-radius: 3px;
+        overflow: hidden;
+        margin: 8px 0;
+    }
+    .bar > div { height: 100%; background: var(--accent); transition: width .2s linear; }
+    .actions { display: flex; gap: 6px; justify-content: flex-end; }
+    .state-done { color: var(--ok); }
+    .state-fail { color: var(--danger); }
+    .state-cancel { color: var(--text-dim); }
+</style>
+</head>
+<body>
+    <div class="header">
+        <h1 id="title">Downloads</h1>
+        <button id="clear" data-i18n="clear">Clear completed</button>
+    </div>
+    <div class="list" id="list"></div>
+
+<script>
+    const $ = (id) => document.getElementById(id);
+    let lang = 'en';
+    const L10N = {
+        title:   { en: 'Downloads', zh: '下载' },
+        clear:   { en: 'Clear completed', zh: '清除已完成' },
+        empty:   { en: 'No downloads yet', zh: '暂无下载' },
+        cancel:  { en: 'Cancel', zh: '取消' },
+        open:    { en: 'Open', zh: '打开' },
+        show:    { en: 'Show in folder', zh: '打开文件夹' },
+        done:    { en: 'Completed', zh: '已完成' },
+        cancelled: { en: 'Cancelled', zh: '已取消' },
+        interrupted: { en: 'Failed', zh: '下载失败' }
+    };
+    const t = (k) => L10N[k] ? (L10N[k][lang] !== undefined ? L10N[k][lang] : L10N[k].en) : k;
+
+    function fmtSize(bytes) {
+        const n = Number(bytes) || 0;
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+        return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+    }
+
+    function relTime(ts) {
+        const diff = Date.now() - (Number(ts) || Date.now());
+        const min = Math.floor(diff / 60000);
+        if (min < 1) return lang === 'zh' ? '刚刚' : 'just now';
+        if (min < 60) return lang === 'zh' ? min + ' 分钟前' : min + 'm ago';
+        const h = Math.floor(min / 60);
+        if (h < 24) return lang === 'zh' ? h + ' 小时前' : h + 'h ago';
+        const d = Math.floor(h / 24);
+        return lang === 'zh' ? d + ' 天前' : d + 'd ago';
+    }
+
+    function stateLabel(item) {
+        switch (item.state) {
+            case 'completed': return t('done');
+            case 'cancelled': return t('cancelled');
+            case 'interrupted': return t('interrupted');
+            default: return '';
+        }
+    }
+
+    function render(list) {
+        const box = $('list');
+        box.innerHTML = '';
+        if (!list || !list.length) {
+            const empty = document.createElement('div');
+            empty.className = 'empty';
+            empty.textContent = t('empty');
+            box.appendChild(empty);
+            return;
+        }
+        for (const item of list) {
+            const el = document.createElement('div');
+            el.className = 'item';
+
+            const row = document.createElement('div');
+            row.className = 'row';
+            const name = document.createElement('span');
+            name.className = 'name';
+            name.textContent = item.name;
+            name.title = item.name;
+            const meta = document.createElement('span');
+            meta.className = 'meta';
+            if (item.state === 'progressing') {
+                const pct = item.total > 0 ? Math.round(item.received / item.total * 100) : 0;
+                meta.textContent = `${pct}%  ${fmtSize(item.received)} / ${fmtSize(item.total)}`;
+            } else if (item.state === 'completed') {
+                meta.className = 'meta state-done';
+                meta.textContent = fmtSize(item.total || item.received) + ' · ' + relTime(item.startedAt);
+            } else {
+                meta.className = 'meta ' + (item.state === 'interrupted' ? 'state-fail' : 'state-cancel');
+                meta.textContent = stateLabel(item);
+            }
+            row.appendChild(name);
+            row.appendChild(meta);
+            el.appendChild(row);
+
+            if (item.state === 'progressing') {
+                const bar = document.createElement('div');
+                bar.className = 'bar';
+                const fill = document.createElement('div');
+                const pct = item.total > 0 ? (item.received / item.total * 100) : 0;
+                fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+                bar.appendChild(fill);
+                el.appendChild(bar);
+            }
+
+            const actions = document.createElement('div');
+            actions.className = 'actions';
+            if (item.state === 'progressing') {
+                const btn = document.createElement('button');
+                btn.textContent = t('cancel');
+                btn.addEventListener('click', () => window.downloadsAPI.cancel(item.id));
+                actions.appendChild(btn);
+            } else if (item.state === 'completed' && item.savePath) {
+                const openBtn = document.createElement('button');
+                openBtn.textContent = t('open');
+                openBtn.addEventListener('click', () => window.downloadsAPI.open(item.id));
+                const showBtn = document.createElement('button');
+                showBtn.textContent = t('show');
+                showBtn.addEventListener('click', () => window.downloadsAPI.show(item.id));
+                actions.appendChild(openBtn);
+                actions.appendChild(showBtn);
+            }
+            if (actions.childNodes.length) el.appendChild(actions);
+            box.appendChild(el);
+        }
+    }
+
+    function applyLang() {
+        document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+        $('title').textContent = t('title');
+        $('clear').textContent = t('clear');
+        window.downloadsAPI.get().then(render).catch(() => {});
+    }
+
+    $('clear').addEventListener('click', () => window.downloadsAPI.clear());
+
+    // Surface a missing preload instead of silently rendering an empty list
+    if (!window.downloadsAPI) {
+        $('list').textContent = 'downloadsAPI unavailable (preload failed)';
+        console.error('[downloads] preload bridge missing');
+    }
+    window.downloadsAPI.onState(render);
+    window.downloadsAPI.onThemeChanged((theme) => {
+        document.documentElement.classList.toggle('light', theme === 'light');
+    });
+    window.downloadsAPI.onLangChanged((l) => { lang = l === 'zh' ? 'zh' : 'en'; applyLang(); });
+    window.downloadsAPI.get().then(render).catch(() => {});
+</script>
+</body>
+</html>
