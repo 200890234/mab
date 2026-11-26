@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('toolbarAPI', {
     onWebTools: (cb) => ipcRenderer.on('webtools-sync', (_e, list) => cb(list)),
     onActiveWebTool: (cb) => ipcRenderer.on('webtool-active', (_e, key) => cb(key)),
     onLockState: (cb) => ipcRenderer.on('lock-state', (_e, state) => cb(state)),
+    onGroups: (cb) => ipcRenderer.on('groups-sync', (_e, list) => cb(list)),
     openDownloads: () => ipcRenderer.send('open-downloads'),
     addWebTool: (url, name) => ipcRenderer.send('add-webtool', url, name),
     switchWebTool: (key) => ipcRenderer.send('switch-webtool', key),
@@ -12,11 +13,12 @@ contextBridge.exposeInMainWorld('toolbarAPI', {
     // Bookmarks ("favorites"): persistent shortcuts rendered in the same row
     onBookmarks: (cb) => ipcRenderer.on('bookmarks-sync', (_e, list) => cb(list)),
     openBookmark: (id) => ipcRenderer.send('bookmark-open', id),
-    addBookmark: (url, name) => ipcRenderer.send('bookmark-add', url, name),
+    addBookmark: (url, name, group) => ipcRenderer.send('bookmark-add', url, name, group),
     updateBookmark: (id, patch) => ipcRenderer.send('bookmark-update', id, patch),
+    setBookmarkGroup: (id, group) => ipcRenderer.send('bookmark-set-group', id, group),
     reorderBookmark: (fromId, toId) => ipcRenderer.send('reorder-bookmark', fromId, toId),
     // Main asks the toolbar to show the inline edit form for a bookmark
-    onBookmarkEdit: (cb) => ipcRenderer.on('bookmark-edit', (_e, id, name, url) => cb(id, name, url)),
+    onBookmarkEdit: (cb) => ipcRenderer.on('bookmark-edit', (_e, id, name, url, group) => cb(id, name, url, group)),
     // Right-click context menu (native popup) for a bookmark / ad-hoc tab
     showCtxPopup: (kind, id, x, y) => ipcRenderer.send('show-ctx-popup', kind, id, x, y),
     // Localized labels for the self-drawn menu buttons (File / View / Help)

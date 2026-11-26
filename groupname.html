@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+    :root {
+        --bg: #1e1e1e;
+        --text: #d7d7d7;
+        --border: #333;
+        --hover: #3a3a3a;
+        --accent: #4a90d9;
+    }
+    html.light {
+        --bg: #ECEFF4;
+        --text: #2a2a2a;
+        --border: #d0d6dd;
+        --hover: #dde3ea;
+        --accent: #2f6fb0;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        user-select: none;
+    }
+    .box { width: 280px; display: flex; flex-direction: column; gap: 10px; }
+    .title { font-size: 13px; font-weight: 600; }
+    input {
+        width: 100%;
+        height: 30px;
+        padding: 0 8px;
+        border-radius: 5px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        font-size: 13px;
+        outline: none;
+    }
+    input:focus { border-color: var(--accent); }
+    .row { display: flex; gap: 8px; justify-content: flex-end; }
+    button {
+        height: 26px;
+        padding: 0 14px;
+        border-radius: 5px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 12px;
+    }
+    .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+    <div class="box">
+        <div class="title" id="title">New group</div>
+        <input id="name" type="text" maxlength="60" autocomplete="off" />
+        <div class="row">
+            <button class="primary" id="ok">Save</button>
+            <button id="cancel">Cancel</button>
+        </div>
+    </div>
+<script>
+    const params = new URLSearchParams(location.search);
+    const mode = params.get('mode') === 'rename' ? 'rename' : 'create';
+    const titleEl = document.getElementById('title');
+    const inputEl = document.getElementById('name');
+    const L10N = {
+        create: { en: 'New group', zh: '新建分组' },
+        rename: { en: 'Rename group', zh: '重命名分组' }
+    };
+    function applyLang(lang) {
+        const key = lang === 'zh' ? 'zh' : 'en';
+        document.documentElement.lang = key === 'zh' ? 'zh-CN' : 'en';
+        titleEl.textContent = L10N[mode][key];
+    }
+    applyLang('en');
+    inputEl.value = params.get('value') || '';
+    inputEl.focus();
+    inputEl.select();
+
+    function submit() {
+        const v = inputEl.value.trim();
+        if (!v) { inputEl.focus(); return; }
+        window.groupNameAPI.submit(v);
+    }
+    document.getElementById('ok').addEventListener('click', submit);
+    document.getElementById('cancel').addEventListener('click', () => window.groupNameAPI.cancel());
+    inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submit();
+        if (e.key === 'Escape') window.groupNameAPI.cancel();
+    });
+    window.groupNameAPI.onThemeChanged((theme) => {
+        document.documentElement.classList.toggle('light', theme === 'light');
+    });
+    window.groupNameAPI.onLangChanged((lang) => applyLang(lang));
+</script>
+</body>
+</html>

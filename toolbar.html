@@ -119,6 +119,7 @@
     .tool-btn.bm .x { display: none; }
     .tool-btn.bm:hover .x { display: inline; }
     .tool-btn .lock { font-size: 11px; opacity: 0.85; }
+    .tool-btn .grp-ico { font-size: 11px; opacity: 0.9; }
 
     .add-wrap { position: relative; display: inline-block; flex-shrink: 0; }
     .add-btn {
@@ -141,10 +142,22 @@
         border: 1px solid var(--border);
         border-radius: 4px;
         padding: 0 4px;
-        width: 380px;
+        width: 480px;
+        max-width: calc(100vw - 16px);
         height: 26px;
     }
     .add-form.show { display: flex; }
+    .add-form select {
+        flex: 0 0 auto;
+        width: 104px;
+        height: 20px;
+        border-radius: 3px;
+        border: 1px solid var(--border);
+        background: var(--hover);
+        color: var(--text);
+        font-size: 11px;
+        outline: none;
+    }
     .add-form input {
         flex: 1;
         min-width: 0; /* otherwise the intrinsic input width pushes the buttons out of the box */
@@ -187,6 +200,7 @@
             <div class="add-form" id="addForm">
                 <input id="nameInput" type="text" placeholder="Name (optional)" />
                 <input id="urlInput" type="text" placeholder="https://example.com" />
+                <select id="groupSelect"></select>
                 <div class="row">
                     <button class="ok" id="okBtn">Add</button>
                     <button class="cancel" id="cancelBtn">Cancel</button>
@@ -201,6 +215,7 @@
     const addForm = document.getElementById('addForm');
     const nameInput = document.getElementById('nameInput');
     const urlInput = document.getElementById('urlInput');
+    const groupSelect = document.getElementById('groupSelect');
     const okBtn = document.getElementById('okBtn');
     const cancelBtn = document.getElementById('cancelBtn');
 
@@ -210,6 +225,7 @@
     let editingId = null;   // set while the inline form edits an existing bookmark
     let dragBmId = null;    // bookmark id currently being dragged for reordering
     let lockState = { enabled: false, unlocked: true }; // bookmark password lock state
+    let groupsList = [];    // bookmark groups ("folders")
 
     function normalizeUrl(u) {
         u = (u || '').trim();
@@ -218,72 +234,101 @@
         return u;
     }
 
+    function renderBookmarkButton(bm) {
+        const tab = webTools.find(t => t.bookmarkId === bm.id);
+        const btn = document.createElement('button');
+        const protectedBm = !!(lockState.enabled && bm.locked);
+        btn.className = 'tool-btn bm' + (tab && tab.key === activeKey ? ' active' : '');
+        btn.title = bm.name + '\n' + bm.url + (protectedBm ? '\n🔒 Password protected' : '');
+        if (protectedBm) {
+            const lock = document.createElement('span');
+            lock.className = 'lock';
+            lock.textContent = '🔒';
+            btn.appendChild(lock);
+        }
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = bm.name;
+        btn.appendChild(label);
+        if (tab) {
+            const x = document.createElement('span');
+            x.className = 'x';
+            x.textContent = '×';
+            x.addEventListener('click', (e) => {
+                e.stopPropagation();
+                window.toolbarAPI.closeWebTool(tab.key);
+            });
+            btn.appendChild(x);
+        }
+        btn.addEventListener('click', () => window.toolbarAPI.openBookmark(bm.id));
+        // Drag to reorder: drop onto another bookmark to take its position
+        btn.draggable = true;
+        btn.addEventListener('dragstart', (e) => {
+            dragBmId = bm.id;
+            e.dataTransfer.effectAllowed = 'move';
+            try { e.dataTransfer.setData('text/plain', bm.id); } catch (err) { /* optional */ }
+            btn.classList.add('dragging');
+        });
+        btn.addEventListener('dragend', () => {
+            dragBmId = null;
+            btn.classList.remove('dragging');
+            toolsEl.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'));
+        });
+        btn.addEventListener('dragover', (e) => {
+            if (!dragBmId || dragBmId === bm.id) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            btn.classList.add('drop-hint');
+        });
+        btn.addEventListener('dragleave', (e) => {
+            if (e.relatedTarget && btn.contains(e.relatedTarget)) return;
+            btn.classList.remove('drop-hint');
+        });
+        btn.addEventListener('drop', (e) => {
+            e.preventDefault();
+            btn.classList.remove('drop-hint');
+            if (dragBmId && dragBmId !== bm.id) window.toolbarAPI.reorderBookmark(dragBmId, bm.id);
+            dragBmId = null;
+        });
+        btn.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            window.toolbarAPI.showCtxPopup('bookmark', bm.id, Math.round(e.clientX), Math.round(e.clientY));
+        });
+        toolsEl.appendChild(btn);
+    }
+
+    // A single folder button pinned to the far left: it lists all groups, and each group opens
+    // its bookmarks in a cascading submenu. Native menu (the 30px toolbar row cannot host HTML
+    // dropdowns).
+    function renderGroupEntry() {
+        const btn = document.createElement('button');
+        btn.className = 'tool-btn grp';
+        btn.title = groupsList.map(g => g.name).join('\n');
+        const icon = document.createElement('span');
+        icon.className = 'grp-ico';
+        icon.textContent = '📁';
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = L10N.groups[currentLang] || 'Groups';
+        btn.appendChild(icon);
+        btn.appendChild(label);
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            window.toolbarAPI.showCtxPopup('grouplist', 'all', Math.round(e.clientX), Math.round(e.clientY));
+        });
+        toolsEl.appendChild(btn);
+    }
+
     function render() {
         toolsEl.innerHTML = '';
-        // Bookmarks first: persistent shortcuts, highlighted when their tab is the active one.
-        // Clicking opens (or focuses) the tab; the × on hover closes only the tab, not the bookmark.
+        const knownGroups = new Set(groupsList.map(g => g.id));
+        // One folder button on the far left lists every group; grouped bookmarks live behind it.
+        if (groupsList.length) renderGroupEntry();
+        // Ungrouped bookmarks stay pinned in the row.
         for (const bm of bookmarksList) {
-            const tab = webTools.find(t => t.bookmarkId === bm.id);
-            const btn = document.createElement('button');
-            const protectedBm = !!(lockState.enabled && bm.locked);
-            btn.className = 'tool-btn bm' + (tab && tab.key === activeKey ? ' active' : '');
-            btn.title = bm.name + '\n' + bm.url + (protectedBm ? '\n🔒 Password protected' : '');
-            if (protectedBm) {
-                const lock = document.createElement('span');
-                lock.className = 'lock';
-                lock.textContent = '🔒';
-                btn.appendChild(lock);
-            }
-            const label = document.createElement('span');
-            label.className = 'label';
-            label.textContent = bm.name;
-            btn.appendChild(label);
-            if (tab) {
-                const x = document.createElement('span');
-                x.className = 'x';
-                x.textContent = '×';
-                x.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    window.toolbarAPI.closeWebTool(tab.key);
-                });
-                btn.appendChild(x);
-            }
-            btn.addEventListener('click', () => window.toolbarAPI.openBookmark(bm.id));
-            // Drag to reorder: drop onto another bookmark to take its position
-            btn.draggable = true;
-            btn.addEventListener('dragstart', (e) => {
-                dragBmId = bm.id;
-                e.dataTransfer.effectAllowed = 'move';
-                try { e.dataTransfer.setData('text/plain', bm.id); } catch (err) { /* optional */ }
-                btn.classList.add('dragging');
-            });
-            btn.addEventListener('dragend', () => {
-                dragBmId = null;
-                btn.classList.remove('dragging');
-                toolsEl.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'));
-            });
-            btn.addEventListener('dragover', (e) => {
-                if (!dragBmId || dragBmId === bm.id) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                btn.classList.add('drop-hint');
-            });
-            btn.addEventListener('dragleave', (e) => {
-                if (e.relatedTarget && btn.contains(e.relatedTarget)) return;
-                btn.classList.remove('drop-hint');
-            });
-            btn.addEventListener('drop', (e) => {
-                e.preventDefault();
-                btn.classList.remove('drop-hint');
-                if (dragBmId && dragBmId !== bm.id) window.toolbarAPI.reorderBookmark(dragBmId, bm.id);
-                dragBmId = null;
-            });
-            btn.addEventListener('contextmenu', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                window.toolbarAPI.showCtxPopup('bookmark', bm.id, Math.round(e.clientX), Math.round(e.clientY));
-            });
-            toolsEl.appendChild(btn);
+            if (bm.group && knownGroups.has(bm.group)) continue;
+            renderBookmarkButton(bm);
         }
         // Ad-hoc tabs (opened from target=_blank links etc.): transient, always closable,
         // and convertible into bookmarks from their context menu.
@@ -340,14 +385,15 @@
     });
 
     window.toolbarAPI.onWebTools((list) => { webTools = list || []; render(); });
+    window.toolbarAPI.onGroups((list) => { groupsList = list || []; render(); });
     window.toolbarAPI.onBookmarks((list) => { bookmarksList = list || []; render(); });
     window.toolbarAPI.onActiveWebTool((key) => { activeKey = key; render(); });
     window.toolbarAPI.onLockState((s) => { if (s) { lockState = s; render(); } });
     document.getElementById('btnDownloads').addEventListener('click', () => window.toolbarAPI.openDownloads());
     // Main process asks to edit a bookmark (from its context menu): prefill the inline form
-    window.toolbarAPI.onBookmarkEdit((id, name, url) => {
+    window.toolbarAPI.onBookmarkEdit((id, name, url, group) => {
         if (addForm.classList.contains('show')) return;
-        showForm(id, name, url);
+        showForm(id, name, url, group);
     });
     window.toolbarAPI.onThemeChanged((theme) => {
         document.documentElement.classList.toggle('light', theme === 'light');
@@ -360,6 +406,8 @@
         save: { en: 'Save', zh: '保存' },
         cancel: { en: 'Cancel', zh: '取消' },
         addTitle: { en: 'Add bookmark', zh: '添加书签' },
+        noGroup: { en: 'No group', zh: '不分组' },
+        groups: { en: 'Groups', zh: '分组' },
         namePh: { en: 'Name (optional)', zh: '名称（可选）' },
         urlPh: { en: 'https://example.com', zh: 'https://example.com' },
     };
@@ -371,7 +419,7 @@
         nameInput.placeholder = L10N.namePh[currentLang];
         urlInput.placeholder = L10N.urlPh[currentLang];
     }
-    window.toolbarAPI.onLangChanged((lang) => applyLang(lang));
+    window.toolbarAPI.onLangChanged((lang) => { applyLang(lang); render(); });
     applyLang(currentLang);
     window.toolbarAPI.onSidebarWidth((w) => {
         // Keep the left menu area aligned with the sidebar below, and the right tool area
@@ -380,10 +428,25 @@
     });
 
     // Inline form doubles as "add bookmark" (+ button) and "edit bookmark" (context menu).
-    function showForm(id, name, url) {
+    function fillGroupOptions(selected) {
+        groupSelect.innerHTML = '';
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = L10N.noGroup[currentLang];
+        groupSelect.appendChild(none);
+        for (const g of groupsList) {
+            const o = document.createElement('option');
+            o.value = g.id;
+            o.textContent = g.name;
+            groupSelect.appendChild(o);
+        }
+        groupSelect.value = selected && groupsList.some(g => g.id === selected) ? selected : '';
+    }
+    function showForm(id, name, url, group) {
         editingId = id || null;
         nameInput.value = name || '';
         urlInput.value = url || '';
+        fillGroupOptions(group || '');
         addForm.classList.add('show');
         (editingId ? nameInput : urlInput).focus();
     }
@@ -392,19 +455,22 @@
         editingId = null;
         nameInput.value = '';
         urlInput.value = '';
+        groupSelect.innerHTML = '';
     }
     addBtn.addEventListener('click', () => {
         if (addForm.classList.contains('show')) hideForm();
-        else showForm(null, '', '');
+        else showForm(null, '', '', null);
     });
     cancelBtn.addEventListener('click', hideForm);
     okBtn.addEventListener('click', () => {
         const url = normalizeUrl(urlInput.value);
         const name = nameInput.value.trim();
+        const groupId = groupSelect.value || null;
         if (editingId) {
             if (url) window.toolbarAPI.updateBookmark(editingId, { name, url });
+            window.toolbarAPI.setBookmarkGroup(editingId, groupId);
         } else if (url) {
-            window.toolbarAPI.addBookmark(url, name);
+            window.toolbarAPI.addBookmark(url, name, groupId);
         }
         hideForm();
     });

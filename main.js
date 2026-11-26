@@ -59,8 +59,12 @@ let seqCounter = 0;
 // Toolbar bookmarks ("favorites"): persistent shortcuts shown in the top toolbar row, e.g.
 // daily check-in sites. A bookmark is NOT a tab — clicking one opens (or focuses) a tab backed
 // by a dedicated `bookmark_<id>` partition, so its login state survives closing the tab.
-let bookmarks = [];          // [{ id: 'bm-N', name, url }]
+let bookmarks = [];          // [{ id: 'bm-N', name, url, group?: 'bg-N' }]
 let bookmarkSeq = 0;
+// Single-level bookmark groups ("folders"). Grouped bookmarks are reached through a folder
+// button in the toolbar; ungrouped ones stay pinned in the row exactly as before.
+let bookmarkGroups = [];     // [{ id: 'bg-N', name }]
+let bookmarkGroupSeq = 0;
 
 // ---------------- AI service configuration (user-editable, stored in services.json) ----------------
 // The service list lives in services.json inside the userData dir and is the single source of
@@ -435,6 +439,10 @@ function applyTheme(theme) {
     if (downloadsWin && !downloadsWin.isDestroyed()) {
         try { downloadsWin.webContents.send('theme-changed', theme); } catch (e) { }
     }
+    // Keep the bookmark-group name window in sync with the app theme
+    if (groupNameWin && !groupNameWin.isDestroyed()) {
+        try { groupNameWin.webContents.send('theme-changed', theme); } catch (e) { }
+    }
 }
 
 // Auto-start preference (separate file, to avoid mixing with sessions)
@@ -507,6 +515,9 @@ function loadState() {
         const bookmarks = Array.isArray(raw.bookmarks)
             ? raw.bookmarks.filter(b => b && typeof b.id === 'string' && typeof b.name === 'string' && typeof b.url === 'string')
             : [];
+        const bookmarkGroups = Array.isArray(raw.bookmarkGroups)
+            ? raw.bookmarkGroups.filter(g => g && typeof g.id === 'string' && typeof g.name === 'string')
+            : [];
         const allKeys = [...sessions.map(s => s.key), ...webTools.map(w => w.key)];
         if (allKeys.length === 0) {
             if (bookmarks.length === 0) return null;
@@ -514,6 +525,7 @@ function loadState() {
                 sessions: [],
                 webTools: [],
                 bookmarks,
+                bookmarkGroups,
                 activeKey: null,
                 seqCounter: Number.isInteger(raw.seqCounter) ? raw.seqCounter : 0,
                 windowBounds: raw.windowBounds || null,
@@ -524,6 +536,7 @@ function loadState() {
             sessions,
             webTools,
             bookmarks,
+            bookmarkGroups,
             activeKey: allKeys.includes(raw.activeKey) ? raw.activeKey : allKeys[0],
             seqCounter: Number.isInteger(raw.seqCounter) ? raw.seqCounter : 0,
             windowBounds: raw.windowBounds || null,
@@ -569,7 +582,8 @@ function saveState() {
         sidebarWidth,
         sessions,
         webTools,
-        bookmarks
+        bookmarks,
+        bookmarkGroups
     };
 
     try {
@@ -1527,6 +1541,71 @@ function buildPopupMenu(type) {
     return Menu.buildFromTemplate(itemsToMenuTemplate(items));
 }
 
+// Name prompt for creating/renaming a bookmark group. Uses a small dedicated window: the
+// sidebar layout turned out to be unreliable for this (the prompt could be clipped or never
+// shown), while a BrowserWindow is simple and always visible.
+let pendingGroupPrompt = null;
+let groupNameWin = null;
+
+function openGroupNameWindow(mode, groupId = null, bookmarkId = null) {
+    pendingGroupPrompt = { mode, groupId, bookmarkId };
+    if (groupNameWin && !groupNameWin.isDestroyed()) {
+        groupNameWin.focus();
+        return;
+    }
+    const g = groupId ? bookmarkGroups.find(x => x.id === groupId) : null;
+    const isRename = mode === 'rename';
+    groupNameWin = new BrowserWindow({
+        width: 330,
+        height: 165,
+        resizable: false,
+        minimizable: false,
+        maximizable: false,
+        autoHideMenuBar: true,
+        title: isRename
+            ? (appConfig.lang === 'zh' ? '重命名分组' : 'Rename group')
+            : (appConfig.lang === 'zh' ? '新建分组' : 'New group'),
+        webPreferences: {
+            preload: path.join(__dirname, 'groupname-preload.js'),
+            nodeIntegration: false,
+            contextIsolation: true
+        }
+    });
+    groupNameWin.setBackgroundColor(appConfig.theme === 'light' ? '#ECEFF4' : '#1e1e1e');
+    groupNameWin.loadFile(path.join(__dirname, 'groupname.html'), {
+        query: { mode, value: g ? g.name : '' }
+    });
+    groupNameWin.on('closed', () => {
+        groupNameWin = null;
+        pendingGroupPrompt = null;
+    });
+    groupNameWin.webContents.on('did-finish-load', () => {
+        if (!groupNameWin || groupNameWin.isDestroyed()) return;
+        try { groupNameWin.webContents.send('theme-changed', appConfig.theme); } catch (e) {}
+        try { groupNameWin.webContents.send('lang-changed', appConfig.lang); } catch (e) {}
+    });
+}
+
+function promptGroupName(mode, groupId = null, bookmarkId = null) {
+    console.log('[group] prompt requested:', mode, groupId, bookmarkId);
+    openGroupNameWindow(mode, groupId, bookmarkId);
+}
+
+// Applies whatever the prompt was collecting (create with optional bookmark assignment, or rename)
+function applyGroupName(name) {
+    const p = pendingGroupPrompt;
+    pendingGroupPrompt = null;
+    if (!p) return;
+    const n = String(name || '').trim();
+    if (!n) return;
+    if (p.mode === 'rename') {
+        renameBookmarkGroup(p.groupId, n);
+    } else {
+        const g = addBookmarkGroup(n);
+        if (g && p.bookmarkId) setBookmarkGroup(p.bookmarkId, g.id);
+    }
+}
+
 // Native context menu for a toolbar bookmark (kind='bookmark') or an ad-hoc web-tool tab
 // (kind='tool'). Bookmark tabs show Edit/Remove; ad-hoc tabs can be converted into bookmarks.
 function showCtxPopup(kind, id, x, y) {
@@ -1543,7 +1622,26 @@ function showCtxPopup(kind, id, x, y) {
                 ? { label: t('Close Tab', '关闭标签'), click: () => closeWebTool(tabKey) }
                 : { label: t('Open', '打开'), click: () => openBookmark(id) },
             { type: 'separator' },
-            { label: t('Edit…', '编辑…'), click: () => notifyToolbar('bookmark-edit', id, bm.name, bm.url) },
+            { label: t('Edit…', '编辑…'), click: () => notifyToolbar('bookmark-edit', id, bm.name, bm.url, bm.group || null) },
+            {
+                label: t('Move to group', '移动到分组'),
+                submenu: [
+                    {
+                        label: t('No group', '不分组'),
+                        type: 'checkbox',
+                        checked: !bm.group,
+                        click: () => setBookmarkGroup(id, null)
+                    },
+                    ...bookmarkGroups.map(g => ({
+                        label: g.name,
+                        type: 'checkbox',
+                        checked: bm.group === g.id,
+                        click: () => setBookmarkGroup(id, g.id)
+                    })),
+                    { type: 'separator' },
+                    { label: t('New group…', '新建分组…'), click: () => promptGroupName('create', null, id) }
+                ]
+            },
             {
                 // English-only by design (security feature), independent of the UI language.
                 // Not disabled when no password exists: clicking it opens the setup window and
@@ -1565,6 +1663,39 @@ function showCtxPopup(kind, id, x, y) {
             { type: 'separator' },
             { label: t('Remove Bookmark', '移除书签'), click: () => removeBookmark(id) }
         ];
+    } else if (kind === 'grouplist') {
+        // One folder button lists every group; each group cascades into its bookmarks + actions
+        const buildGroupEntry = (g) => {
+            const items = bookmarks.filter(b => b.group === g.id);
+            const submenu = items.length
+                ? items.map(bm => {
+                    const tabKey = findBookmarkTab(bm.id);
+                    const bmMenu = [
+                        {
+                            label: tabKey ? t('Focus Tab', '切换到标签') : t('Open', '打开'),
+                            click: () => openBookmark(bm.id)
+                        }
+                    ];
+                    if (tabKey) bmMenu.push({ label: t('Close Tab', '关闭标签'), click: () => closeWebTool(tabKey) });
+                    bmMenu.push({ type: 'separator' });
+                    bmMenu.push({ label: t('Edit…', '编辑…'), click: () => notifyToolbar('bookmark-edit', bm.id, bm.name, bm.url, bm.group || null) });
+                    bmMenu.push({ label: t('Remove Bookmark', '移除书签'), click: () => removeBookmark(bm.id) });
+                    return {
+                        label: (lockEnabled() && bm.locked ? '🔒 ' : '') + bm.name + (tabKey ? '  · open' : ''),
+                        submenu: bmMenu
+                    };
+                })
+                : [{ label: t('(empty)', '（空）'), enabled: false }];
+            submenu.push({ type: 'separator' });
+            submenu.push({ label: t('Rename…', '重命名…'), click: () => promptGroupName('rename', g.id) });
+            submenu.push({ label: t('Delete group', '删除分组'), click: () => removeBookmarkGroup(g.id) });
+            return { label: g.name, submenu };
+        };
+        template = bookmarkGroups.length
+            ? bookmarkGroups.map(buildGroupEntry)
+            : [{ label: t('No groups yet', '还没有分组'), enabled: false }];
+        template.push({ type: 'separator' });
+        template.push({ label: t('New group…', '新建分组…'), click: () => promptGroupName('create') });
     } else {
         const entry = views.get(id);
         if (!entry || entry.toolKey !== 'customWeb') return;
@@ -2287,14 +2418,56 @@ function setupBookmarkLock() {
 
 function syncBookmarks() {
     notifyToolbar('bookmarks-sync', bookmarks);
+    notifyToolbar('groups-sync', bookmarkGroups);
 }
 
-function addBookmark(url, name, { activate = true } = {}) {
+// ---------------- Bookmark groups (single level) ----------------
+function addBookmarkGroup(name) {
+    const n = String(name || '').trim();
+    if (!n) return null;
+    bookmarkGroupSeq += 1;
+    const g = { id: `bg-${bookmarkGroupSeq}`, name: n };
+    bookmarkGroups.push(g);
+    syncBookmarks();
+    saveStateNow();
+    return g;
+}
+
+function renameBookmarkGroup(id, name) {
+    const g = bookmarkGroups.find(x => x.id === id);
+    const n = String(name || '').trim();
+    if (!g || !n) return;
+    g.name = n;
+    syncBookmarks();
+    saveStateNow();
+}
+
+function removeBookmarkGroup(id) {
+    const i = bookmarkGroups.findIndex(x => x.id === id);
+    if (i === -1) return;
+    bookmarkGroups.splice(i, 1);
+    // Its bookmarks go back to the ungrouped row (never deleted)
+    for (const bm of bookmarks) if (bm.group === id) delete bm.group;
+    syncBookmarks();
+    saveStateNow();
+}
+
+function setBookmarkGroup(bookmarkId, groupId) {
+    const bm = bookmarks.find(b => b.id === bookmarkId);
+    if (!bm) return;
+    if (groupId && bookmarkGroups.some(g => g.id === groupId)) bm.group = groupId;
+    else delete bm.group;
+    syncBookmarks();
+    saveStateNow();
+}
+
+function addBookmark(url, name, { activate = true, group = null } = {}) {
     url = (url || '').trim();
     if (!url || !mainWindow) return null;
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
     bookmarkSeq += 1;
     const bm = { id: `bm-${bookmarkSeq}`, name: (name || '').trim() || hostFromUrl(url) || 'Web', url };
+    if (group && bookmarkGroups.some(g => g.id === group)) bm.group = group;
     bookmarks.push(bm);
     syncBookmarks();
     openBookmark(bm.id, { activate });
@@ -2950,6 +3123,7 @@ function createWindow() {
         try { toolbarView.webContents.send('theme-changed', appConfig.theme); } catch (e) { }
         syncToolbar();
         syncMenu();
+        syncBookmarks();
         try { toolbarView.webContents.send('set-sidebar-width', sidebarWidth); } catch (e) { }
     });
 
@@ -3074,6 +3248,11 @@ function createWindow() {
                     const n = parseInt(String(b.id || '').replace(/^bm-/, ''), 10);
                     return Number.isFinite(n) && n > m ? n : m;
                 }, 0);
+                bookmarkGroups = Array.isArray(saved.bookmarkGroups) ? saved.bookmarkGroups : [];
+                bookmarkGroupSeq = bookmarkGroups.reduce((m, g) => {
+                    const n = parseInt(String(g.id || '').replace(/^bg-/, ''), 10);
+                    return Number.isFinite(n) && n > m ? n : m;
+                }, 0);
                 for (const s of saved.sessions) {
                     addSession(s.toolKey, { notify: false, activate: false, restore: s });
                 }
@@ -3194,9 +3373,20 @@ ipcMain.on('reorder-view', (_event, fromKey, toKey, after) => reorderView(fromKe
 ipcMain.on('add-webtool', (_event, url, name) => { addWebTool(url, name); });
 // Top toolbar bookmarks ("favorites")
 ipcMain.on('bookmark-open', (_event, id) => openBookmark(id));
-ipcMain.on('bookmark-add', (_event, url, name) => { addBookmark(url, name); });
+ipcMain.on('bookmark-add', (_event, url, name, group) => { addBookmark(url, name, { group: group || null }); });
 ipcMain.on('bookmark-update', (_event, id, patch) => { updateBookmark(id, patch || {}); });
 ipcMain.on('reorder-bookmark', (_event, fromId, toId) => reorderBookmark(fromId, toId));
+// Bookmark groups (single level)
+ipcMain.on('bookmark-set-group', (_event, bookmarkId, groupId) => setBookmarkGroup(bookmarkId, groupId || null));
+ipcMain.on('group-remove', (_event, id) => removeBookmarkGroup(id));
+ipcMain.on('group-name-window-submit', (_event, name) => {
+    applyGroupName(name);
+    if (groupNameWin && !groupNameWin.isDestroyed()) groupNameWin.close();
+});
+ipcMain.on('group-name-window-cancel', () => {
+    pendingGroupPrompt = null;
+    if (groupNameWin && !groupNameWin.isDestroyed()) groupNameWin.close();
+});
 // Right-click context menu on a bookmark / ad-hoc toolbar tab
 ipcMain.on('show-ctx-popup', (_event, kind, id, x, y) => { showCtxPopup(kind, id, x, y); });
 ipcMain.on('switch-webtool', (_event, viewKey) => switchView(viewKey));
@@ -3344,6 +3534,9 @@ ipcMain.handle('set-config', async (_event, patch) => {
         }
         if (downloadsWin && !downloadsWin.isDestroyed()) {
             try { downloadsWin.webContents.send('lang-changed', cfg.lang); } catch (e) { }
+        }
+        if (groupNameWin && !groupNameWin.isDestroyed()) {
+            try { groupNameWin.webContents.send('lang-changed', cfg.lang); } catch (e) { }
         }
     }
     return cfg;
